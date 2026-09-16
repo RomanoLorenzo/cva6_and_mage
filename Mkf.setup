@@ -1,0 +1,63 @@
+# Assuming this Makefile is located in the CVA6 directory
+# Assuming python3 is installed
+# Assuming CMake version 3.14 or higher is installed
+
+.PHONY: firstsetup
+
+RISCV := $(CURDIR)/tools/riscv
+INSTALL_DIR := $(RISCV)
+VENV := $(CURDIR)/tools/venv
+
+firstsetup:
+	@echo "[INFO] First setup after cloning the repo"
+
+	@echo "[INFO] Updating git submodules"
+	git submodule update --init --recursive
+
+	@echo "[INFO] Installing dependencies"
+	sudo apt-get update
+	sudo apt-get install -y \
+		autoconf \
+		automake \
+		autotools-dev \
+		curl \
+		git \
+		libmpc-dev \
+		libmpfr-dev \
+		libgmp-dev \
+		gawk \
+		build-essential \
+		bison \
+		flex \
+		texinfo \
+		gperf \
+		libtool \
+		bc \
+		zlib1g-dev \
+		help2man \
+		device-tree-compiler \
+		libyaml-cpp-dev \
+		libboost-system-dev \
+		libboost-regex-dev \
+		libboost-all-dev
+
+	@echo "[INFO] Creating RISC-V toolchain directory"
+	mkdir -p "$(RISCV)"
+
+	@echo "[INFO] Fetching RISC-V toolchain source"
+	RISCV="$(RISCV)" \
+	INSTALL_DIR="$(INSTALL_DIR)" \
+	bash ./util/toolchain-builder/get-toolchain.sh
+
+	@echo "[INFO] Building and installing RISC-V toolchain"
+	RISCV="$(RISCV)" \
+	INSTALL_DIR="$(INSTALL_DIR)" \
+	bash ./util/toolchain-builder/build-toolchain.sh "$(INSTALL_DIR)"
+
+	@echo "[INFO] Setting up Python virtual environment"
+	python3 -m venv "$(VENV)"
+	"$(VENV)/bin/pip" install -r verif/sim/dv/requirements.txt
+
+	@echo "[INFO] Setting up Spike"
+	DV_SIMULATORS=veri-testharness,spike \
+	bash verif/regress/smoke-tests-cv64a6_imafdc_sv39.sh
