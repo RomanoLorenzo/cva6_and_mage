@@ -7,12 +7,12 @@ This repo has been cloned [from the original one](https://github.com/openhwfound
 ## Quick setup
 
 Assumptions:
-- You have both `python3` and `cmake` (version 3.14 or higher) installed.
+- You have `git`, `python3` and `cmake` (version 3.14 or higher) installed.
 - You want to install the standard configuration.
 - You have admin priviledges.
 
 Procedure:
-1. Run inside the terminal:
+1. Run in the root directory :
 ```Bash
 make -f Mkf.setup firstsetup
 ```
@@ -32,47 +32,34 @@ python3 cva6.py --target cv32a60x --iss=$DV_SIMULATORS --iss_yaml=cva6.yaml \
 ../tests/custom/common/crt.S -lgcc \
 -I../tests/custom/env -I../tests/custom/common"
 ```
+4. Perform a standard test on Mage:
+```Bash
+cd ./verif/sim
+
+make magesim-bank_transfer
+```
 
 ## Running standalone simulations of Mage
 
 Before starting the simulation export the `DV_SIMULATORS` environment variable as:
-```sh
+```Bash
 export DV_SIMULATORS="veri-testharness"
 ```
 This is unnecessary if you've already executed `source setup-env.sh` from the root directory (which is strongly suggested).
 
 You can run the simulation **from the `./verif/sim` directory**:
 
-```sh
-make -f Mkf magesim <path to file in directory ../tests/custom/mage_tests/>
+```Bash
+make magesim TAR=<path to file in directory ../tests/custom/mage_tests/>
 ```
-
-## Running regression tests simulations
-
-The smoke-tests script installs a random instruction generator and several tests suites:
-- [riscv-dv](https://github.com/chipsalliance/riscv-dv)
-- [riscv-compliance](https://github.com/lowRISC/riscv-compliance)
-- [riscv-tests](https://github.com/riscv-software-src/riscv-tests)
-- [riscv-arch-test](https://github.com/riscv-non-isa/riscv-arch-test)
-
-
-The regression tests are done by comparing a model simulation trace with the Spike trace.
-
-Several tests scripts can be found in `./verif/regress`
-
-For example, here is how would run the riscv-arch-test regression test suite with the Verilator model:
-
-```sh
-export DV_SIMULATORS=veri-testharness,spike
-bash verif/regress/dv-riscv-arch-test.sh
+e.g.
+```Bash
+make magesim TAR=bank_transfer/bank_transfer.c
 ```
-
 
 ## Logs
 
-The logs from cva6.py are located in `./verif/sim/out_YEAR-MONTH-DAY`.
-
-Assuming you ran the smoke-tests scripts in the previous step, here is the log directory hierarchy:
+The logs from cva6.py are located in `./verif/sim/out_YEAR-MONTH-DAY`. Here is the log directory hierarchy:
 
 - **directed_asm_tests/**: The compiled (to .o then .bin) assembly tests
 - **directed_c_tests/**: The compiled (to .o then .bin) c tests
@@ -101,9 +88,8 @@ test scripts under `verif/regress`:
    VCS with UVM testbench (`vcs-uvm`).
 
 To generate VCD waveforms of the `smoke-tests` regression suite using Verilator, use:
-```sh
-export DV_SIMULATORS=veri-testharness,spike
-export TRACE_FAST=1
+```Bash
+export TRACE_COMPACT=1
 bash verif/regress/smoke-tests-<cpu_version>.sh
 ```
 
@@ -148,18 +134,18 @@ This BSP is used by both `core` testbench and `uvmt_cva6` UVM verification envir
 
 ## [Mage-and-Rogue IP](https://github.com/edge-group-polito/Mage-and-Rogue)
 
-### Attach/Detach Mage to the SoC
+### Attach/Detach Mage to/from the SoC
 
 1. From the `ips/Mage-and-Rogue` directory generate the default configuration.
-```sh
+```Bash
 make mage-gen
 ```
 2. From the root directory attach Mage to the SoC.
-```sh
+```Bash
 python3 mage-attach
 ```
 3. Execute the simulation.
-4. From the root directory attach Mage from the SoC. 
-```sh
+4. From the root directory detach Mage from the SoC. 
+```Bash
 python3 mage-detach
 ```

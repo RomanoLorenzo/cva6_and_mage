@@ -13,7 +13,11 @@ root-dir    := $(dir $(mkfile_path))
 ifndef CVA6_REPO_DIR
 $(warning must set CVA6_REPO_DIR to point at the root of CVA6 sources and CVA6_TB_DIR to point here -- doing it for you...)
 export CVA6_REPO_DIR = $(abspath $(root-dir)../..)
+endif
+ifndef CVA6_TB_DIR
 export CVA6_TB_DIR   = $(root-dir)/../tb/core
+endif
+ifndef CORE_V_VERIF
 export CORE_V_VERIF  = $(root-dir)/../core-v-verif
 endif
 ifndef TARGET_CFG
@@ -110,7 +114,7 @@ endif
 # Make these variables available to sub-Makefiles.
 export DEBUG TRACE_FAST TRACE_COMPACT
 
-TESTNAME := $(shell basename -s .o $(elf))
+TESTNAME := $(if $(elf),$(shell basename -s .o $(elf)))
 
 ifeq ($(isspostrun_opts), "")
 grep_address:
@@ -181,7 +185,7 @@ export DV_OVPM_HOME           = $(CORE_V_VERIF)/$(CV_CORE_LC)/vendor_lib/imperas
 export DV_OVPM_MODEL          = $(DV_OVPM_HOME)/riscv_$(CV_CORE_UC)_OVPsim
 export DV_OVPM_DESIGN         = $(DV_OVPM_HOME)/design
 
-export SPIKE_PATH = $(CORE_V_VERIF)/vendor/riscv/riscv-isa-sim/
+export SPIKE_PATH ?= $(CORE_V_VERIF)/vendor/riscv/riscv-isa-sim/
 
 COMMON_COMP_UVM_FLAGS = \
 	  +incdir+$(CVA6_REPO_DIR)/verif/env/uvme +incdir+$(CVA6_REPO_DIR)/verif/tb/uvmt \
@@ -444,6 +448,90 @@ questa-testharness:
 	grep $(isspostrun_opts) $(path_var)/trace_rvfi_hart_00.dasm
 
 ###############################################################################
+# Mage specific commands, variables
+###############################################################################
+DATE := $(shell date +%Y-%m-%d)
+SIM_OUT_DIR := ./out_$(DATE)/veri-testharness_sim/
+
+LOGFILE = $(SIM_OUT_DIR)$(basename $(notdir $(TAR))).cv32a60x.log
+
+.PHONY: magesim-bank_transfer magesim
+
+magesim-bank_transfer: TAR ?= bank_transfer/bank_transfer.c
+magesim-bank_transfer:
+ifndef DV_SIMULATORS
+	$(error "DV_SIMULATORS is not set. Run 'source setup-env.sh' from root directory")
+endif
+	@python3 cva6.py --target cv32a60x --iss=$(DV_SIMULATORS) --iss_yaml=cva6.yaml \
+		--c_tests ../tests/custom/mage_tests/bank_transfer/bank_transfer.c \
+		--linker=../../config/gen_from_riscv_config/linker/link.ld \
+		--gcc_opts="-static -mcmodel=medany -fvisibility=hidden -nostdlib \
+		-nostartfiles -g ../tests/custom/common/syscalls.c \
+		../tests/custom/common/crt.S -lgcc \
+		-I../tests/custom/env -I../tests/custom/common"
+
+	@echo "Bank 0:                                  ADDRESS    VALUE"
+	@grep -ni "mem 0x80000000 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000004 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000008 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000000C 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000010 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000014 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000018 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000001C 0x" $(LOGFILE)
+	@echo ""
+	@echo "Bank 1:                                  ADDRESS    VALUE"
+	@grep -ni "mem 0x80000020 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000024 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000028 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000002C 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000030 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000034 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000038 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000003C 0x" $(LOGFILE)
+	@echo ""
+	@echo "Bank 2:                                  ADDRESS    VALUE"
+	@grep -ni "mem 0x80000040 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000044 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000048 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000004C 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000050 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000054 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000058 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000005C 0x" $(LOGFILE)
+	@echo ""
+	@echo "Bank 3:                                  ADDRESS    VALUE"
+	@grep -ni "mem 0x80000060 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000064 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000068 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000006C 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000070 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000074 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000078 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000007C 0x" $(LOGFILE)
+	@echo ""
+	@echo "Errors:                                  ADDRESS    VALUE"
+	@grep -ni "mem 0x80000080 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000084 0x" $(LOGFILE)
+
+# Syntax: make magesim TAR=<target file>.c
+magesim:
+ifndef DV_SIMULATORS
+	$(error "DV_SIMULATORS is not set. Run 'source setup-env.sh' from root directory")
+endif
+ifndef TAR
+	$(error "You must specify a file with TAR=")
+endif
+	@python3 cva6.py --target cv32a60x --iss=$(DV_SIMULATORS) --iss_yaml=cva6.yaml \
+		--c_tests ../tests/custom/mage_tests/$(TAR) \
+		--linker=../../config/gen_from_riscv_config/linker/link.ld \
+		--gcc_opts="-static -mcmodel=medany -fvisibility=hidden -nostdlib \
+		-nostartfiles -g ../tests/custom/common/syscalls.c \
+		../tests/custom/common/crt.S -lgcc \
+		-I../tests/custom/env -I../tests/custom/common"
+
+
+###############################################################################
 # Common targets and rules
 ###############################################################################
 
@@ -460,6 +548,9 @@ help:
 	@echo "VCS targets:"
 	@echo "   make vcs_uvm_comp    : Compiles with VCS"
 	@echo "   make vcs_uvm_run     : Runs with VCS"
+	@echo "Mage targets:"
+	@echo "   make magesim TAR=<target.c>  : Runs standalone Mage simulation"
+	@echo "   make magesim-bank_transfer   : Runs bank_transfer simulation and dumps results"
 	@echo "Clean-up targets:"
 	@echo "   make clean_all   : Deletes ALL generated files"
 	@echo "Support for other simulators on the ToDo list..."
