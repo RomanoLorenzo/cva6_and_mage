@@ -4,7 +4,7 @@ SIM_OUT_DIR := ./out_$(DATE)/veri-testharness_sim/
 LOGFILE = $(SIM_OUT_DIR)$(basename $(notdir $(TAR))).cv32a60x.log
 
 idump:
-	@echo "Bank 0:                       ADDRESS    VALUE"
+	@echo "Bank 0:                                  ADDRESS    VALUE"
 	@grep -ni "mem 0x80000000 0x" $(LOGFILE)
 	@grep -ni "mem 0x80000004 0x" $(LOGFILE)
 	@grep -ni "mem 0x80000008 0x" $(LOGFILE)
@@ -14,7 +14,7 @@ idump:
 	@grep -ni "mem 0x80000018 0x" $(LOGFILE)
 	@grep -ni "mem 0x8000001C 0x" $(LOGFILE)
 	@echo ""
-	@echo "Bank 1:                       ADDRESS    VALUE"
+	@echo "Bank 1:                                  ADDRESS    VALUE"
 	@grep -ni "mem 0x80000020 0x" $(LOGFILE)
 	@grep -ni "mem 0x80000024 0x" $(LOGFILE)
 	@grep -ni "mem 0x80000028 0x" $(LOGFILE)
@@ -24,7 +24,7 @@ idump:
 	@grep -ni "mem 0x80000038 0x" $(LOGFILE)
 	@grep -ni "mem 0x8000003C 0x" $(LOGFILE)
 	@echo ""
-	@echo "Bank 2:                       ADDRESS    VALUE"
+	@echo "Bank 2:                                  ADDRESS    VALUE"
 	@grep -ni "mem 0x80000040 0x" $(LOGFILE)
 	@grep -ni "mem 0x80000044 0x" $(LOGFILE)
 	@grep -ni "mem 0x80000048 0x" $(LOGFILE)
@@ -34,7 +34,7 @@ idump:
 	@grep -ni "mem 0x80000058 0x" $(LOGFILE)
 	@grep -ni "mem 0x8000005C 0x" $(LOGFILE)
 	@echo ""
-	@echo "Bank 3:                       ADDRESS    VALUE"
+	@echo "Bank 3:                                  ADDRESS    VALUE"
 	@grep -ni "mem 0x80000060 0x" $(LOGFILE)
 	@grep -ni "mem 0x80000064 0x" $(LOGFILE)
 	@grep -ni "mem 0x80000068 0x" $(LOGFILE)
@@ -44,7 +44,7 @@ idump:
 	@grep -ni "mem 0x80000078 0x" $(LOGFILE)
 	@grep -ni "mem 0x8000007C 0x" $(LOGFILE)
 	@echo ""
-	@echo "Errors:                       ADDRESS    VALUE"
+	@echo "Errors:                                  ADDRESS    VALUE"
 	@grep -ni "mem 0x80000080 0x" $(LOGFILE)
 	@grep -ni "mem 0x80000084 0x" $(LOGFILE)
 

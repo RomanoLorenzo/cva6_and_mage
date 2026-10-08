@@ -57,4 +57,4 @@
 	url = https://github.com/pulp-platform/gpio.git
 [submodule "ips/Mage-and-Rogue"]
 	path = ips/Mage-and-Rogue
-	url = https://github.com/RomanoLorenzo/Mage-and-Rogue/tree/butterfly_mode
+	url = https://github.com/RomanoLorenzo/Mage-and-Rogue.git
