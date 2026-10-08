@@ -47,6 +47,7 @@ Bender.lock
 /tools/
 /util/toolchain-builder/src/
 /util/toolchain-builder/build/
+/util/check_csv_sim_out.py
 # Both following lines are needed to list contents of ISA manual build dir.
 !/vendor/riscv/riscv-isa-manual/build/
 !/vendor/riscv/riscv-isa-manual/build/*

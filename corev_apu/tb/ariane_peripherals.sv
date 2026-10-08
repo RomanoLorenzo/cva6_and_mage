@@ -31,6 +31,9 @@ module ariane_peripherals #(
     AXI_BUS.Slave      ethernet        ,
     AXI_BUS.Slave      timer           ,
     output logic [1:0] irq_o           ,
+// >>>>> MAGE_ATTACH_START: PERIPH_PORT >>>>>
+    input  logic       mage_irq_i      ,
+// <<<<< MAGE_ATTACH_END: PERIPH_PORT <<<<<
     // UART
     input  logic       rx_i            ,
     output logic       tx_o            ,
@@ -60,7 +63,11 @@ module ariane_peripherals #(
     logic [ariane_soc::NumSources-1:0] irq_sources;
 
     // Unused interrupt sources
-    assign irq_sources[ariane_soc::NumSources-1:7] = '0;
+    // >>>>> MAGE_ATTACH_START: PLIC_IRQ >>>>>
+    assign irq_sources[7] = mage_irq_i;
+    assign irq_sources[ariane_soc::NumSources-1:8] = '0;
+// ORIG: assign irq_sources[ariane_soc::NumSources-1:7] = '0;
+// <<<<< MAGE_ATTACH_END: PLIC_IRQ <<<<<
 
     REG_BUS #(
         .ADDR_WIDTH ( 32 ),

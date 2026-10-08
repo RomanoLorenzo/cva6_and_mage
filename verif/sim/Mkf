@@ -1,0 +1,65 @@
+DATE := $(shell date +%Y-%m-%d)
+SIM_OUT_DIR := ./out_$(DATE)/veri-testharness_sim/
+
+LOGFILE = $(SIM_OUT_DIR)$(basename $(notdir $(TAR))).cv32a60x.log
+
+idump:
+	@echo "Bank 0:                       ADDRESS    VALUE"
+	@grep -ni "mem 0x80000000 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000004 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000008 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000000C 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000010 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000014 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000018 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000001C 0x" $(LOGFILE)
+	@echo ""
+	@echo "Bank 1:                       ADDRESS    VALUE"
+	@grep -ni "mem 0x80000020 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000024 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000028 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000002C 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000030 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000034 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000038 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000003C 0x" $(LOGFILE)
+	@echo ""
+	@echo "Bank 2:                       ADDRESS    VALUE"
+	@grep -ni "mem 0x80000040 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000044 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000048 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000004C 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000050 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000054 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000058 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000005C 0x" $(LOGFILE)
+	@echo ""
+	@echo "Bank 3:                       ADDRESS    VALUE"
+	@grep -ni "mem 0x80000060 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000064 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000068 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000006C 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000070 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000074 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000078 0x" $(LOGFILE)
+	@grep -ni "mem 0x8000007C 0x" $(LOGFILE)
+	@echo ""
+	@echo "Errors:                       ADDRESS    VALUE"
+	@grep -ni "mem 0x80000080 0x" $(LOGFILE)
+	@grep -ni "mem 0x80000084 0x" $(LOGFILE)
+
+magesim:
+ifndef DV_SIMULATORS
+	$(error "DV_SIMULATORS is not set. Run 'source setup-env.sh' from root directory")
+endif
+ifndef TAR
+	$(error "You must specify a file with TAR=")
+endif
+	python3 cva6.py --target cv32a60x --iss=$(DV_SIMULATORS) --iss_yaml=cva6.yaml \
+		--c_tests ../tests/custom/mage_tests/$(TAR) \
+		--linker=../../config/gen_from_riscv_config/linker/link.ld \
+		--gcc_opts="-static -mcmodel=medany -fvisibility=hidden -nostdlib \
+		-nostartfiles -g ../tests/custom/common/syscalls.c \
+		../tests/custom/common/crt.S -lgcc \
+		-I../tests/custom/env -I../tests/custom/common" && \
+	$(MAKE) -f Mkf idump

@@ -7,8 +7,16 @@
 RISCV := $(CURDIR)/tools/riscv
 INSTALL_DIR := $(RISCV)
 VENV := $(CURDIR)/tools/venv
+VERIBLE := $(CURDIR)/tools/verible
+VERIBLE_VERSION := v0.0-4051-g9fdb4057
+BENDER := $(CURDIR)/tools/bender
+BENDER_VERSION := 0.27.1
+GTKWAVE := $(CURDIR)/tools/gtkwave
+NUM_JOBS := $(shell echo $$(( $$(nproc) * 2 / 3 )))
 
 firstsetup:
+	export NUM_JOBS
+
 	@echo "[INFO] First setup after cloning the repo"
 
 	@echo "[INFO] Updating git submodules"
@@ -39,6 +47,11 @@ firstsetup:
 		libyaml-cpp-dev \
 		libboost-system-dev \
 		libboost-regex-dev \
+		fusesoc \
+		mako \
+		hjson \
+		jsonref \
+		gtkwave \
 		libboost-all-dev
 
 	@echo "[INFO] Creating RISC-V toolchain directory"
@@ -61,3 +74,17 @@ firstsetup:
 	@echo "[INFO] Setting up Spike"
 	DV_SIMULATORS=veri-testharness,spike \
 	bash verif/regress/smoke-tests-cv64a6_imafdc_sv39.sh
+
+	@echo "[INFO] Installing Verible"
+	mkdir -p "$(VERIBLE)"
+	curl -fsSL "https://github.com/chipsalliance/verible/releases/download/$(VERIBLE_VERSION)/verible-$(VERIBLE_VERSION)-linux-static-x86_64.tar.gz" | tar -xz -C "$(VERIBLE)" --strip-components=1
+
+	@echo "[INFO] Installing Bender"
+	mkdir -p "$(BENDER)/bin"
+	curl -fsSL "https://github.com/pulp-platform/bender/releases/download/v$(BENDER_VERSION)/bender-$(BENDER_VERSION)-x86_64-linux-gnu.tar.gz" | tar -xz -C "$(BENDER)/bin"
+	chmod +x "$(BENDER)/bin/bender"
+
+	@echo "[INFO] Setting up GTKWave in tools"
+	mkdir -p "$(GTKWAVE)/bin"
+	ln -sf /usr/bin/gtkwave "$(GTKWAVE)/bin/gtkwave"
+

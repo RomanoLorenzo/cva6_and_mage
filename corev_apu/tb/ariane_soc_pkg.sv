@@ -30,9 +30,17 @@ package ariane_soc;
     CLINT    = 7,
     ROM      = 8,
     Debug    = 9
+// >>>>> MAGE_ATTACH_START: SLAVES_ENUM >>>>>
+    ,
+    MageCtrl = 10,
+    MageData = 11
+// <<<<< MAGE_ATTACH_END: SLAVES_ENUM <<<<<
   } axi_slaves_t;
 
-  localparam NB_PERIPHERALS = Debug + 1;
+  // >>>>> MAGE_ATTACH_START: NB_PERIPHERALS >>>>>
+  localparam NB_PERIPHERALS = MageData + 1;
+// ORIG: localparam NB_PERIPHERALS = Debug + 1;
+// <<<<< MAGE_ATTACH_END: NB_PERIPHERALS <<<<<
 
 
   localparam logic[63:0] DebugLength    = 64'h1000;
@@ -44,6 +52,10 @@ package ariane_soc;
   localparam logic[63:0] SPILength      = 64'h800000;
   localparam logic[63:0] EthernetLength = 64'h10000;
   localparam logic[63:0] GPIOLength     = 64'h1000;
+// >>>>> MAGE_ATTACH_START: LENGTHS >>>>>
+  localparam logic[63:0] MageCtrlLength = 64'h1000;
+  localparam logic[63:0] MageDataLength = 64'h100000;
+// <<<<< MAGE_ATTACH_END: LENGTHS <<<<<
 `ifdef NEXYS_VIDEO
   localparam logic[63:0] DRAMLength     = 64'h20000000; // 512MByte of DDR on Nexys video board
 `else
@@ -63,6 +75,10 @@ package ariane_soc;
     SPIBase      = 64'h2000_0000,
     EthernetBase = 64'h3000_0000,
     GPIOBase     = 64'h4000_0000,
+// >>>>> MAGE_ATTACH_START: BASE_ADDRS >>>>>
+    MageCtrlBase = 64'h50000000,
+    MageDataBase = 64'hF0000000,
+// <<<<< MAGE_ATTACH_END: BASE_ADDRS <<<<<
     DRAMBase     = 64'h8000_0000
   } soc_bus_start_t;
 

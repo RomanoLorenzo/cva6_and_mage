@@ -46,7 +46,8 @@ export TB_PATH="$ROOT_PROJECT/verif/tb/core"
 export TESTS_PATH="$ROOT_PROJECT/verif/tests"
 export RISCV_DV_ROOT="$ROOT_PROJECT/verif/sim/dv"
 export CVA6_DV_ROOT="$ROOT_PROJECT/verif/env/corev-dv"
-export DV_SIMULATORS="veri-testharness,spike"
+# export DV_SIMULATORS="veri-testharness,spike"
+export DV_SIMULATORS="veri-testharness"
 
 # -----------------------------------------------------------------------------
 # 4. Simulators (Verilator & Spike)
@@ -66,6 +67,13 @@ fi
 export SPIKE_PATH="$SPIKE_INSTALL_DIR/bin"
 
 # -----------------------------------------------------------------------------
+# 4.1 EDA & Build Tools (Verible, Bender, GTKWave)
+# -----------------------------------------------------------------------------
+export VERIBLE_INSTALL_DIR="${VERIBLE_INSTALL_DIR:-$ROOT_PROJECT/tools/verible}"
+export BENDER_INSTALL_DIR="${BENDER_INSTALL_DIR:-$ROOT_PROJECT/tools/bender}"
+export GTKWAVE_INSTALL_DIR="${GTKWAVE_INSTALL_DIR:-$ROOT_PROJECT/tools/gtkwave}"
+
+# -----------------------------------------------------------------------------
 # 5. Python Virtual Environment
 # -----------------------------------------------------------------------------
 VENV_DIR="$ROOT_PROJECT/tools/venv"
@@ -74,25 +82,31 @@ if [ -f "$VENV_DIR/bin/activate" ]; then
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
 else
-    echo "[WARNING] Virtual environment not found at $VENV_DIR"
+    echo "[WARNING] Virtual environment NOT FOUND at $VENV_DIR"
 fi
 
 # -----------------------------------------------------------------------------
 # 6. System PATH Consolidation
 # -----------------------------------------------------------------------------
-export PATH="$VERILATOR_INSTALL_DIR/bin:$SPIKE_PATH:$RISCV/bin:$PATH"
+export PATH="$VERILATOR_INSTALL_DIR/bin:$SPIKE_PATH:$RISCV/bin:$VERIBLE_INSTALL_DIR/bin:$BENDER_INSTALL_DIR/bin:$GTKWAVE_INSTALL_DIR/bin:$PATH"
+
+export CVA6_REPO_DIR="/home/lorenzo_administrator/VLSILAB_Intern/projects/cva6_and_mage"
 
 # -----------------------------------------------------------------------------
 # 7. Environment Status Summary
 # -----------------------------------------------------------------------------
 echo "================================================="
 echo " CVA6 Unified Environment Configured Successfully"
-echo "  [INFO] ROOT_PROJECT : $ROOT_PROJECT"
-echo "  [INFO] RISCV        : $RISCV"
-echo "  [INFO] Prefix       : ${CV_SW_PREFIX:-not detected}"
-echo "  [INFO] GCC          : $(which "$RISCV_CC" 2>/dev/null || echo 'not found')"
-echo "  [INFO] Python       : $(which python 2>/dev/null || echo 'not found')"
-echo "  [INFO] Verilator    : $(which verilator 2>/dev/null || echo 'not found')"
-echo "  [INFO] Spike        : $(which spike 2>/dev/null || echo 'not found')"
-echo "  [INFO] Simulators   : $DV_SIMULATORS"
+echo "  [INFO] GCC           : $(which "$RISCV_CC" 2>/dev/null || echo 'NOT FOUND')"
+echo "  [INFO] Python        : $(which python 2>/dev/null || echo 'NOT FOUND')"
+echo "  [INFO] Verilator     : $(which verilator 2>/dev/null || echo 'NOT FOUND')"
+echo "  [INFO] Spike         : $(which spike 2>/dev/null || echo 'NOT FOUND')"
+echo "  [INFO] Verible       : $(which verible-verilog-format 2>/dev/null || echo 'NOT FOUND')"
+echo "  [INFO] Bender        : $(which bender 2>/dev/null || echo 'NOT FOUND')"
+echo "  [INFO] GTKWave       : $(which gtkwave 2>/dev/null || echo 'NOT FOUND')"
+echo "  [INFO] Prefix        : ${CV_SW_PREFIX:-not detected}"
+echo "  [INFO] ROOT_PROJECT  : $ROOT_PROJECT"
+echo "  [INFO] RISCV         : $RISCV"
+echo "  [INFO] CVA6_REPO_DIR : ${CVA6_REPO_DIR}"
+echo "  [INFO] Simulators    : $DV_SIMULATORS"
 echo "================================================="

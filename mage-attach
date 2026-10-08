@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+# Copyright 2026 Politecnico di Torino.
+# Solderpad Hardware License, Version 2.1, see LICENSE.md for details.
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+#
+# File: mage-attach
+# Description: CLI command to attach Mage CGRA (DAE mode) to CVA6 SoC.
+
+import sys
+import argparse
+from pathlib import Path
+
+# Add project root to sys.path
+root_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(root_dir))
+
+from util.mage_soc_manager import MageSoCManager
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Attach Mage CGRA (DAE mode) to CVA6 SoC AXI interconnect."
+    )
+    parser.add_argument(
+        "--config",
+        "-c",
+        type=str,
+        default=None,
+        help="Path to Mage configuration HJSON file (default: ips/Mage-and-Rogue/config/dae/cfg_2x2_2x2_full.hjson)",
+    )
+    parser.add_argument(
+        "--status",
+        "-s",
+        action="store_true",
+        help="Check current attachment status and exit.",
+    )
+
+    args = parser.parse_args()
+
+    manager = MageSoCManager(root_dir=root_dir, config_path=args.config)
+
+    if args.status:
+        manager.status()
+        sys.exit(0)
+
+    try:
+        manager.attach()
+    except Exception as e:
+        print(f"[ERROR] Failed to attach Mage: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+
