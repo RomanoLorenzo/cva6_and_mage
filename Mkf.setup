@@ -1,30 +1,65 @@
-# Assuming this Makefile is located in the CVA6 directory
-# Assuming python3 is installed
-# Assuming CMake version 3.14 or higher is installed
+# =============================================================================
+# CVA6 + Mage Environment Setup Makefile
+# =============================================================================
+SHELL := /bin/bash
+.SHELLFLAGS := -eu -o pipefail -c
 
-.PHONY: firstsetup
+.DEFAULT_GOAL := help
 
-RISCV := $(CURDIR)/tools/riscv
-INSTALL_DIR := $(RISCV)
-VENV := $(CURDIR)/tools/venv
-VERIBLE := $(CURDIR)/tools/verible
-VERIBLE_VERSION := v0.0-4051-g9fdb4057
-BENDER := $(CURDIR)/tools/bender
-BENDER_VERSION := 0.27.1
-GTKWAVE := $(CURDIR)/tools/gtkwave
-NUM_JOBS := $(shell echo $$(( $$(nproc) * 2 / 3 )))
+# Directories
+PROJECT_ROOT ?= $(CURDIR)
+TOOLS_DIR    := $(PROJECT_ROOT)/tools
+RISCV        ?= $(TOOLS_DIR)/riscv
+INSTALL_DIR  ?= $(RISCV)
+VENV         ?= $(TOOLS_DIR)/venv
+VERIBLE      ?= $(TOOLS_DIR)/verible
+BENDER       ?= $(TOOLS_DIR)/bender
+GTKWAVE      ?= $(TOOLS_DIR)/gtkwave
 
-firstsetup:
-	export NUM_JOBS
+# Versions
+VERIBLE_VERSION ?= v0.0-4051-g9fdb4057
+BENDER_VERSION  ?= 0.27.1
 
-	@echo "[INFO] First setup after cloning the repo"
+# Toolchain build parallelism (at least 1 job, default to 2/3 of available cores)
+NUM_CORES := $(shell nproc 2>/dev/null || echo 1)
+NUM_JOBS  ?= $(shell echo $$(( ($(NUM_CORES) * 2 / 3) > 0 ? ($(NUM_CORES) * 2 / 3) : 1 )))
 
+# Environment exports for child scripts
+export RISCV INSTALL_DIR NUM_JOBS
+
+# Privilege escalation handling (only use sudo if not already root)
+SUDO ?= $(if $(filter 0,$(shell id -u 2>/dev/null || echo 1)),,sudo)
+SKIP_APT ?= 0
+
+.PHONY: help firstsetup submodules apt-deps toolchain venv sim-smoke verible bender gtkwave
+
+help:
+	@echo "CVA6 Setup targets:"
+	@echo "   make -f Mkf.setup firstsetup  : Run complete environment setup"
+	@echo "   make -f Mkf.setup submodules  : Initialize and update git submodules"
+	@echo "   make -f Mkf.setup apt-deps    : Install system apt dependencies (supports SKIP_APT=1)"
+	@echo "   make -f Mkf.setup toolchain   : Build RISC-V GCC toolchain (NUM_JOBS=$(NUM_JOBS))"
+	@echo "   make -f Mkf.setup venv        : Setup Python virtualenv and pip requirements"
+	@echo "   make -f Mkf.setup sim-smoke   : Setup Verilator/Spike and run smoke tests"
+	@echo "   make -f Mkf.setup verible     : Download and install Verible ($(VERIBLE_VERSION))"
+	@echo "   make -f Mkf.setup bender      : Download and install Bender (v$(BENDER_VERSION))"
+	@echo "   make -f Mkf.setup gtkwave     : Link GTKWave into tools/gtkwave/bin"
+
+firstsetup: submodules apt-deps toolchain venv sim-smoke verible bender gtkwave
+	@echo "================================================================="
+	@echo "[SUCCESS] Environment setup completed successfully!"
+	@echo "Remember to run: source setup-env.sh"
+	@echo "================================================================="
+
+submodules:
 	@echo "[INFO] Updating git submodules"
 	git submodule update --init --recursive
 
-	@echo "[INFO] Installing dependencies"
-	sudo apt-get update
-	sudo apt-get install -y \
+apt-deps:
+ifeq ($(SKIP_APT),0)
+	@echo "[INFO] Installing system dependencies via apt"
+	$(SUDO) apt-get update
+	$(SUDO) apt-get install -y \
 		autoconf \
 		automake \
 		autotools-dev \
@@ -47,44 +82,74 @@ firstsetup:
 		libyaml-cpp-dev \
 		libboost-system-dev \
 		libboost-regex-dev \
-		fusesoc \
-		mako \
-		hjson \
-		jsonref \
-		gtkwave \
-		libboost-all-dev
+		libboost-all-dev \
+		cmake \
+		ninja-build \
+		python3-venv \
+		python3-pip \
+		gtkwave
+else
+	@echo "[INFO] Skipping apt dependencies installation (SKIP_APT=1)"
+endif
 
-	@echo "[INFO] Creating RISC-V toolchain directory"
-	mkdir -p "$(RISCV)"
+toolchain:
+	@mkdir -p "$(RISCV)"
+	@if [ -x "$(RISCV)/bin/riscv32-unknown-elf-gcc" ] || [ -x "$(RISCV)/bin/riscv-none-elf-gcc" ]; then \
+		echo "[INFO] RISC-V toolchain already present in $(RISCV), skipping build"; \
+	else \
+		echo "[INFO] Fetching RISC-V toolchain source"; \
+		bash ./util/toolchain-builder/get-toolchain.sh; \
+		echo "[INFO] Building and installing RISC-V toolchain using $(NUM_JOBS) jobs"; \
+		bash ./util/toolchain-builder/build-toolchain.sh "$(INSTALL_DIR)"; \
+	fi
 
-	@echo "[INFO] Fetching RISC-V toolchain source"
-	RISCV="$(RISCV)" \
-	INSTALL_DIR="$(INSTALL_DIR)" \
-	bash ./util/toolchain-builder/get-toolchain.sh
-
-	@echo "[INFO] Building and installing RISC-V toolchain"
-	RISCV="$(RISCV)" \
-	INSTALL_DIR="$(INSTALL_DIR)" \
-	bash ./util/toolchain-builder/build-toolchain.sh "$(INSTALL_DIR)"
-
+venv:
 	@echo "[INFO] Setting up Python virtual environment"
-	python3 -m venv "$(VENV)"
+	@if [ ! -f "$(VENV)/bin/pip" ]; then \
+		python3 -m venv "$(VENV)"; \
+	fi
+	"$(VENV)/bin/pip" install --upgrade pip
 	"$(VENV)/bin/pip" install -r verif/sim/dv/requirements.txt
+	"$(VENV)/bin/pip" install fusesoc mako hjson jsonref
 
-	@echo "[INFO] Setting up Spike"
+sim-smoke:
+	@echo "[INFO] Setting up Spike & running regression smoke-tests"
 	DV_SIMULATORS=veri-testharness,spike \
 	bash verif/regress/smoke-tests-cv64a6_imafdc_sv39.sh
 
-	@echo "[INFO] Installing Verible"
-	mkdir -p "$(VERIBLE)"
-	curl -fsSL "https://github.com/chipsalliance/verible/releases/download/$(VERIBLE_VERSION)/verible-$(VERIBLE_VERSION)-linux-static-x86_64.tar.gz" | tar -xz -C "$(VERIBLE)" --strip-components=1
+verible:
+	@if [ -x "$(VERIBLE)/bin/verible-verilog-format" ]; then \
+		echo "[INFO] Verible already installed in $(VERIBLE), skipping"; \
+	else \
+		echo "[INFO] Installing Verible $(VERIBLE_VERSION)"; \
+		mkdir -p "$(VERIBLE)"; \
+		TMP_TGZ="$$(mktemp)"; \
+		curl -fsSL "https://github.com/chipsalliance/verible/releases/download/$(VERIBLE_VERSION)/verible-$(VERIBLE_VERSION)-linux-static-x86_64.tar.gz" -o "$$TMP_TGZ"; \
+		tar -xzf "$$TMP_TGZ" -C "$(VERIBLE)" --strip-components=1; \
+		rm -f "$$TMP_TGZ"; \
+	fi
 
-	@echo "[INFO] Installing Bender"
-	mkdir -p "$(BENDER)/bin"
-	curl -fsSL "https://github.com/pulp-platform/bender/releases/download/v$(BENDER_VERSION)/bender-$(BENDER_VERSION)-x86_64-linux-gnu.tar.gz" | tar -xz -C "$(BENDER)/bin"
-	chmod +x "$(BENDER)/bin/bender"
+bender:
+	@if [ -x "$(BENDER)/bin/bender" ]; then \
+		echo "[INFO] Bender already installed in $(BENDER), skipping"; \
+	else \
+		echo "[INFO] Installing Bender v$(BENDER_VERSION)"; \
+		mkdir -p "$(BENDER)/bin"; \
+		TMP_TGZ="$$(mktemp)"; \
+		curl -fsSL "https://github.com/pulp-platform/bender/releases/download/v$(BENDER_VERSION)/bender-$(BENDER_VERSION)-x86_64-linux-gnu.tar.gz" -o "$$TMP_TGZ"; \
+		tar -xzf "$$TMP_TGZ" -C "$(BENDER)/bin"; \
+		chmod +x "$(BENDER)/bin/bender"; \
+		rm -f "$$TMP_TGZ"; \
+	fi
 
+gtkwave:
 	@echo "[INFO] Setting up GTKWave in tools"
-	mkdir -p "$(GTKWAVE)/bin"
-	ln -sf /usr/bin/gtkwave "$(GTKWAVE)/bin/gtkwave"
-
+	@mkdir -p "$(GTKWAVE)/bin"
+	@GTKWAVE_BIN="$$(which -a gtkwave 2>/dev/null | grep -v "$(GTKWAVE)" | head -n 1)"; \
+	GTKWAVE_BIN="$${GTKWAVE_BIN:-/usr/bin/gtkwave}"; \
+	if [ -x "$$GTKWAVE_BIN" ]; then \
+		ln -sf "$$GTKWAVE_BIN" "$(GTKWAVE)/bin/gtkwave"; \
+		echo "[INFO] Linked $$GTKWAVE_BIN -> $(GTKWAVE)/bin/gtkwave"; \
+	else \
+		echo "[WARNING] gtkwave executable not found on system path"; \
+	fi
