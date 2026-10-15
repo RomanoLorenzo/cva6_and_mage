@@ -48,6 +48,8 @@ export RISCV_DV_ROOT="$ROOT_PROJECT/verif/sim/dv"
 export CVA6_DV_ROOT="$ROOT_PROJECT/verif/env/corev-dv"
 # export DV_SIMULATORS="veri-testharness,spike"
 export DV_SIMULATORS="veri-testharness"
+export TARGET_CFG="cv32a60x"
+export target="cv32a60x"
 
 # -----------------------------------------------------------------------------
 # 4. Simulators (Verilator & Spike)

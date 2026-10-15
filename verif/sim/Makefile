@@ -20,9 +20,7 @@ endif
 ifndef CORE_V_VERIF
 export CORE_V_VERIF  = $(root-dir)/../core-v-verif
 endif
-ifndef TARGET_CFG
 export TARGET_CFG = $(target)
-endif
 
 HPDCACHE_DIR ?= $(CVA6_REPO_DIR)/core/cache_subsystem/hpdcache
 export HPDCACHE_DIR
@@ -34,8 +32,8 @@ export HPDCACHE_TARGET_CFG
 FLIST_TB   := $(CVA6_TB_DIR)/Flist.cva6_tb
 
 # target takes one of the following cva6 hardware configuration:
-# cv64a6_imafdc_sv39, cv32a6_imac_sv0, cv32a6_imac_sv32, cv32a6_imafc_sv32
-target     ?= cv64a6_imafdc_sv39
+# cv64a6_imafdc_sv39, cv32a6_imac_sv0, cv32a6_imac_sv32, cv32a6_imafc_sv32, cv32a60x
+target     ?= cv32a60x
 FLIST_CORE = $(if $(gate),$(CVA6_REPO_DIR)/core/Flist.cva6_gate,$(CVA6_REPO_DIR)/core/Flist.cva6)
 th_top_level      := $(if $(gate),ariane_gate_tb,ariane_tb)
 do_file           := $(if $(gate),init_gate,init_testharness)
