@@ -526,7 +526,8 @@ endif
 		--gcc_opts="-static -mcmodel=medany -fvisibility=hidden -nostdlib \
 		-nostartfiles -g ../tests/custom/common/syscalls.c \
 		../tests/custom/common/crt.S -lgcc \
-		-I../tests/custom/env -I../tests/custom/common"
+		-I../tests/custom/env -I../tests/custom/common \
+		-I../../ips/Mage-and-Rogue/sw ../../ips/Mage-and-Rogue/sw/mage.c"
 
 
 ###############################################################################
