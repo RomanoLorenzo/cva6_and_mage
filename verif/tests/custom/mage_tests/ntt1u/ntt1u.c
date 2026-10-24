@@ -14,6 +14,7 @@
 
 #include "mage.h"
 #include "mage_cva6.h"
+#include "mage_regs.h"
 
 #define DRAM_BASE             ((volatile uint32_t *)(0x80000000UL))
 #define N                     256U
@@ -60,10 +61,6 @@ static const int32_t zetas[N] = {
 int32_t montgomery_reduce(int64_t a);
 void ntt(int32_t a[N]);
 
-static inline uint32_t get_sn_1u(uint32_t a);
-static inline uint32_t get_bi_1u(uint32_t a);
-static inline uint32_t get_ba_1u(uint32_t a);
-
 uint32_t loadSamplesIntoSpM(const int32_t *invect, uint32_t len);
 void loadZetasIntoSpM(void);
 void clearPongBanks(void);
@@ -87,7 +84,10 @@ int main(void) {
   // 2. Compute reference Golden Model (CRYSTALS-Dilithium official forward NTT)
   ntt(gold_out);
 
-  // 3. Load input samples into SpM Ping banks according to XOR addressing
+  // 3. Configure static, stage-independent Mage control registers (including CPU XOR mode)
+  configureStageIndependentRegs();
+
+  // 4. Load input samples into SpM Ping banks linearly (hardware maps XOR-like)
   uint32_t load_errs = loadSamplesIntoSpM(vec_in, N);
   if (load_errs != 0) {
     DRAM_BASE[0] = 0xDEAD0001U;
@@ -95,14 +95,11 @@ int main(void) {
     return (int)load_errs;
   }
 
-  // 4. Preload all 1024 twiddle factors into Bank 4 (Zeta stream)
+  // 5. Preload twiddle factors into Bank 4 (Zeta stream)
   loadZetasIntoSpM();
 
-  // 5. Clear Pong destination banks with poison pattern
+  // 6. Clear Pong destination banks with poison pattern
   clearPongBanks();
-
-  // 6. Configure static, stage-independent Mage control registers
-  configureStageIndependentRegs();
 
   // 7. Execute all 8 NTT stages sequentially
   for (uint32_t stage = 0; stage < 8; stage++) {
@@ -111,7 +108,7 @@ int main(void) {
     mage_wait_done();
   }
 
-  // 8. Read back final transformed coefficients from Ping banks
+  // 8. Read back final transformed coefficients from Ping banks linearly (hardware reconstructs order)
   readSamplesFromSpM(hw_out, N);
 
   // 9. Compare hardware output against official Dilithium golden model
@@ -165,45 +162,10 @@ void ntt(int32_t a[N]) {
 }
 
 /**
- * @brief Calculate Step Number (parity of bank address bits) for U = 1.
- *
- * @param a Flat sample index (0 to 255).
- * @return uint32_t Parity bit (0 or 1).
- */
-static inline uint32_t get_sn_1u(uint32_t a) {
-  uint32_t higher = a >> 1;
-  uint32_t sn = 0;
-  while (higher) {
-    sn ^= (higher & 1U);
-    higher >>= 1;
-  }
-  return sn;
-}
-
-/**
- * @brief Calculate physical Bank Index for U = 1 (B = 2 banks).
- *
- * @param a Flat sample index.
- * @return uint32_t Bank index (0 or 1).
- */
-static inline uint32_t get_bi_1u(uint32_t a) {
-  uint32_t b = a & 1U;
-  uint32_t sn = get_sn_1u(a);
-  return (b ^ sn);
-}
-
-/**
- * @brief Calculate Intra-Bank Word Address for U = 1.
- *
- * @param a Flat sample index.
- * @return uint32_t Word offset within designated bank (0 to 127).
- */
-static inline uint32_t get_ba_1u(uint32_t a) {
-  return (a >> 1);
-}
-
-/**
- * @brief Load input samples into SpM Ping banks according to XOR pattern.
+ * @brief Load input samples into SpM Ping banks linearly.
+ *        With Mage CPU XOR mode enabled, the hardware SpM decoder transparently
+ *        distributes sequential samples a = 0..255 across Ping banks 0 and 1
+ *        in the conflict-free Radix-2 NTT XOR layout.
  *
  * @param invect Pointer to ordered input array.
  * @param len Number of elements (256).
@@ -211,21 +173,18 @@ static inline uint32_t get_ba_1u(uint32_t a) {
  */
 uint32_t loadSamplesIntoSpM(const int32_t *invect, uint32_t len) {
   uint32_t errs = 0;
+  volatile uint32_t *spm_ping = (volatile uint32_t *)MAGE_DATA_BASE;
 
+  // CPU linear sequential write: hardware transparently maps to conflict-free XOR pattern
   for (uint32_t a = 0; a < len; a++) {
-    uint32_t bi = get_bi_1u(a);
-    uint32_t ba = get_ba_1u(a);
-    volatile uint32_t *bank = MAGE_BANK(bi);
-    bank[ba] = (uint32_t)invect[a];
+    spm_ping[a] = (uint32_t)invect[a];
   }
 
   asm volatile("fence w, w" ::: "memory");
 
+  // Linear readback verification
   for (uint32_t a = 0; a < len; a++) {
-    uint32_t bi = get_bi_1u(a);
-    uint32_t ba = get_ba_1u(a);
-    volatile uint32_t *bank = MAGE_BANK(bi);
-    if (bank[ba] != (uint32_t)invect[a]) {
+    if (spm_ping[a] != (uint32_t)invect[a]) {
       errs++;
     }
   }
@@ -236,44 +195,46 @@ uint32_t loadSamplesIntoSpM(const int32_t *invect, uint32_t len) {
 
 /**
  * @brief Preload twiddle factors into Bank 4 (Zeta stream).
- *        Direct 1:1 mapping: Bank 4[k] = zetas[k] for k = 0..255 (256 words).
+ *        Stream 2 (Zetas, Bank 4) is single-bank and operates linearly.
  */
 void loadZetasIntoSpM(void) {
-  volatile uint32_t *bank4 = MAGE_BANK(4);
+  volatile uint32_t *spm_zeta = (volatile uint32_t *)(MAGE_DATA_BASE + 4 * BANK_SIZE_BYTES);
   for (uint32_t i = 0; i < N; i++) {
-    bank4[i] = (uint32_t)zetas[i];
+    spm_zeta[i] = (uint32_t)zetas[i];
   }
   asm volatile("fence w, w" ::: "memory");
 }
 
 /**
  * @brief Clear Pong destination banks with a known poison value to prevent false positives.
+ *        Cleared linearly across the 256 words of Stream 1 (Banks 2 and 3).
  */
 void clearPongBanks(void) {
-  volatile uint32_t *bank2 = MAGE_BANK(2);
-  volatile uint32_t *bank3 = MAGE_BANK(3);
+  volatile uint32_t *spm_pong = (volatile uint32_t *)(MAGE_DATA_BASE + 2 * BANK_SIZE_BYTES);
 
-  for (uint32_t i = 0; i < 128U; i++) {
-    bank2[i] = 0x55AA55AAU;
-    bank3[i] = 0x55AA55AAU;
+  for (uint32_t i = 0; i < N; i++) {
+    spm_pong[i] = 0x55AA55AAU;
   }
 
   asm volatile("fence w, w" ::: "memory");
 }
 
 /**
- * @brief Read back processed samples from SpM Ping banks according to XOR pattern.
+ * @brief Read back processed samples from SpM Ping banks linearly.
+ *        With Mage CPU XOR mode enabled, the hardware SpM decoder transparently
+ *        gathers samples from the conflict-free XOR bank layout and returns
+ *        them in natural sequential order a = 0..255.
  *
  * @param outvect Destination buffer.
  * @param len Number of elements (256).
  * @return uint32_t Number of elements read.
  */
 uint32_t readSamplesFromSpM(int32_t *outvect, uint32_t len) {
+  volatile uint32_t *spm_ping = (volatile uint32_t *)MAGE_DATA_BASE;
+
+  // CPU linear sequential read: hardware transparently gathers from conflict-free XOR layout
   for (uint32_t a = 0; a < len; a++) {
-    uint32_t bi = get_bi_1u(a);
-    uint32_t ba = get_ba_1u(a);
-    volatile uint32_t *bank = MAGE_BANK(bi);
-    outvect[a] = (int32_t)bank[ba];
+    outvect[a] = (int32_t)spm_ping[a];
   }
 
   asm volatile("fence r, r" ::: "memory");
@@ -310,10 +271,12 @@ void configureStageIndependentRegs(void) {
   REG_GEN_CFG = (1U << 18) | 1U;
 
   /**
-   * REG_BLOCK_SIZE = 0x00000000
-   *   BLOCK_SIZE[1:0] = 0; Linear 1 word per block
+   * REG_BLOCK_SIZE: Enable CPU XOR mode
+   *   BLOCK_SIZE[1:0] = 1 (2-way interleaving degree)
+   *   BLOCK_SIZE[2]   = 1 (CPU XOR mode enable)
+   *   Value: (1 << 2) | 1 = 0x00000005
    */
-  REG_BLOCK_SIZE = 0x00000000U;
+  REG_BLOCK_SIZE = (1U << MAGE_BLOCK_SIZE_CPU_XOR_MODE_BIT) | 1U;
 
   /**
    * REG_STREAM_XOR_MODE = 0x00000003
