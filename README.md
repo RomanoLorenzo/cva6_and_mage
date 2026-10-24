@@ -69,6 +69,9 @@ The logs from cva6.py are located in `./verif/sim/out_YEAR-MONTH-DAY`. Here is t
 
 The regression test log summarizes the comparison between the simulator trace and the Spike trace. Be aware that a if a test fails before the comparison step, it will not appear in this log, check the output of cva6.py and the logs of the simulation instead.
 
+**Note: If the `main()` function returns a non-zero value the simulation stops without any log file for debug.** A simulation workflow can include two phases:
+1. Run the test returning the number of errors at the end. This confirms wether the test was successful or not. 
+2. Run the same test again returning `0` at the end to generate log files.
 
 ## Waveform generation
 
