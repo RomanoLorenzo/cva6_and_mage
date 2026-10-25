@@ -56,6 +56,29 @@ e.g.
 ```Bash
 make magesim TAR=bank_transfer/bank_transfer.c
 ```
+or to run NTT tests:
+```Bash
+make magesim TAR=ntt4u/ntt4u.c
+```
+
+### Automatic Configuration Validation
+Each Mage C test program specifies the hardware configuration it expects via a comment placed near the top of the file:
+```C
+// MAGE_CFG_HJSON = ips/Mage-and-Rogue/config/dae/<config_file>.hjson
+```
+
+When you launch `make magesim`, an automated pre-simulation check verifies whether the test matches the configuration currently attached to the SoC. If there is a mismatch or missing configuration, a clear warning is displayed:
+- **Mismatched configuration**: The test expects a different configuration than the one currently attached to the SoC.
+- **Mage detached**: Mage is not attached to the SoC (`mage-detach` has been run).
+- **Missing tag**: The C test does not specify an expected configuration.
+- **Software/RTL desynchronization**: The configuration attached to the SoC differs from the one generated in `ips/Mage-and-Rogue/sw/mage.h`.
+
+When everything matches, you will see a green confirmation before the simulation starts:
+```text
+[INFO] Mage configuration match: cfg_ntt_4u_3stream.hjson
+       Test file: verif/tests/custom/mage_tests/ntt4u/ntt4u.c
+       Attached : ips/Mage-and-Rogue/config/dae/cfg_ntt_4u_3stream.hjson
+```
 
 ## Logs
 
@@ -139,16 +162,39 @@ This BSP is used by both `core` testbench and `uvmt_cva6` UVM verification envir
 
 ### Attach/Detach Mage to/from the SoC
 
-1. From the `ips/Mage-and-Rogue` directory generate the default configuration.
+1. From the `ips/Mage-and-Rogue` directory, generate Mage RTL and software headers for the desired configuration:
 ```Bash
-make mage-gen
+make mage-gen [MAGE_CFG_HJSON=<path to config.hjson>]
 ```
-2. From the root directory attach Mage to the SoC.
+For example, to configure Mage for 4 parallel NTT computing units:
+```Bash
+make mage-gen MAGE_CFG_HJSON=config/dae/cfg_ntt_4u_3stream.hjson
+```
+If `MAGE_CFG_HJSON` is omitted, the default `config/dae/cfg_2x2_2x2_full.hjson` is generated.
+
+2. From the root directory, attach Mage to the CVA6 SoC:
 ```Bash
 python3 mage-attach
 ```
-3. Execute the simulation.
-4. From the root directory detach Mage from the SoC. 
+> **Tip:** Running `python3 mage-attach` without arguments automatically detects and attaches the configuration you just generated in step 1! You can also explicitly specify a configuration:
+```Bash
+python3 mage-attach -c <path to config.hjson>
+```
+
+3. Re-verilate the CVA6 SoC harness with the updated Mage configuration:
+```Bash
+make verilate verilator='verilator --no-timing' target=cv32a60x defines=
+```
+
+4. Check the current attachment status at any time:
+```Bash
+python3 mage-attach --status
+```
+This command displays whether Mage is attached, the active configuration, SpM bank count, total scratchpad size, memory map, and verifies alignment with `sw/mage.h`.
+
+5. Execute your simulation (see [Running standalone simulations of Mage](#running-standalone-simulations-of-mage)).
+
+6. When finished, or before running non-Mage tests, detach Mage to restore pristine SoC files:
 ```Bash
 python3 mage-detach
 ```

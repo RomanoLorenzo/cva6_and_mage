@@ -17,6 +17,8 @@
 //                      - Store AGE 2: Captures b(j) from PE(0,3) into Pong Bank 2 (delay = 7).
 //                      - Store AGE 3: Captures b(j+k) from PE(1,3) into Pong Bank 3 (delay = 7).
 
+// MAGE_CFG_HJSON = ips/Mage-and-Rogue/config/dae/cfg_ntt_1cu_3stream.hjson
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>

@@ -8,7 +8,9 @@
 //              and testing full 8-stage ping-pong execution with N=256 samples
 //              using the official Mage software APIs.
 //              See: https://doi.org/10.46586/tches.v2022.i1.94-126 (Algorithm 7)
-//              Test for configuration: cfg_ntt_4u_3stream.hjson
+//              Test for configuration: cfg_ntt_1cu_3stream.hjson
+
+// MAGE_CFG_HJSON = ips/Mage-and-Rogue/config/dae/cfg_ntt_1cu_3stream.hjson
 
 #include <stdint.h>
 #include <stdio.h>

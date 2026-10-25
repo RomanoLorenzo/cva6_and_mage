@@ -460,6 +460,7 @@ magesim-bank_transfer:
 ifndef DV_SIMULATORS
 	$(error "DV_SIMULATORS is not set. Run 'source setup-env.sh' from root directory")
 endif
+	@python3 ../../util/check_mage_cfg.py --test ../tests/custom/mage_tests/bank_transfer/bank_transfer.c
 	@python3 cva6.py --target cv32a60x --iss=$(DV_SIMULATORS) --iss_yaml=cva6.yaml \
 		--c_tests ../tests/custom/mage_tests/bank_transfer/bank_transfer.c \
 		--linker=../../config/gen_from_riscv_config/linker/link.ld \
@@ -520,6 +521,7 @@ endif
 ifndef TAR
 	$(error "You must specify a file with TAR=")
 endif
+	@python3 ../../util/check_mage_cfg.py --test ../tests/custom/mage_tests/$(TAR)
 	@python3 cva6.py --target cv32a60x --iss=$(DV_SIMULATORS) --iss_yaml=cva6.yaml \
 		--c_tests ../tests/custom/mage_tests/$(TAR) \
 		--linker=../../config/gen_from_riscv_config/linker/link.ld \

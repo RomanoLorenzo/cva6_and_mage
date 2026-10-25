@@ -1,3 +1,5 @@
+// MAGE_CFG_HJSON = ips/Mage-and-Rogue/config/dae/cfg_2x2_2x2_full.hjson
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>

@@ -8,6 +8,8 @@
 //              and Montgomery modular reduction.
 //              Outputs are validated against the official CRYSTALS-Dilithium CPU golden model.
 
+// MAGE_CFG_HJSON = ips/Mage-and-Rogue/config/dae/cfg_ntt_1u_3stream.hjson
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>

@@ -11,6 +11,10 @@
 // Author: Florian Zaruba, ETH Zurich
 // Description: Contains SoC information as constants
 package ariane_soc;
+// >>>>> MAGE_ATTACH_START: CONFIG_INFO >>>>>
+// MAGE_ATTACHED_CONFIG: ips/Mage-and-Rogue/config/dae/cfg_ntt_4u_3stream.hjson
+// <<<<< MAGE_ATTACH_END: CONFIG_INFO <<<<<
+
   // M-Mode Hart, S-Mode Hart
   localparam int unsigned NumTargets = 2;
   // Uart, SPI, Ethernet, reserved

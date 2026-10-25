@@ -10,6 +10,8 @@
 //              See: https://doi.org/10.46586/tches.v2022.i1.94-126 (Algorithm 7)
 //              Test for configuration: cfg_ntt_4u_3stream.hjson
 
+// MAGE_CFG_HJSON = ips/Mage-and-Rogue/config/dae/cfg_ntt_4u_3stream.hjson
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>

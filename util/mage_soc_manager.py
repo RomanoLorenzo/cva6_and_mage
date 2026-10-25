@@ -41,18 +41,7 @@ class MageSoCManager:
         else:
             self.root_dir = Path(root_dir).resolve()
 
-        if config_path is None:
-            self.config_path = (
-                self.root_dir
-                / "ips"
-                / "Mage-and-Rogue"
-                / "config"
-                / "dae"
-                / "cfg_2x2_2x2_full.hjson"
-            )
-        else:
-            self.config_path = Path(config_path).resolve()
-
+        self.state_file = self.root_dir / ".mage_attached_cfg"
         self.backup_dir = self.root_dir / ".mage_soc_backup"
 
         # Target files in CVA6 SoC
@@ -68,6 +57,106 @@ class MageSoCManager:
             self.testharness_path,
             self.flist_core_path,
         ]
+
+        # Flexible config resolution
+        if config_path is not None:
+            self.config_path = self._resolve_config_path(config_path)
+        else:
+            # Dynamic discovery:
+            # 1. If currently attached, discover the attached config!
+            attached_cfg = self.get_attached_config_path()
+            if attached_cfg and attached_cfg.exists():
+                self.config_path = attached_cfg
+            else:
+                # 2. Check generated config in sw/mage.h
+                gen_cfg = self.get_generated_config_path()
+                if gen_cfg and gen_cfg.exists():
+                    self.config_path = gen_cfg
+                else:
+                    self.config_path = (
+                        self.root_dir
+                        / "ips"
+                        / "Mage-and-Rogue"
+                        / "config"
+                        / "dae"
+                        / "cfg_2x2_2x2_full.hjson"
+                    )
+
+    def _resolve_config_path(self, path):
+        """Resolves a configuration path flexibly."""
+        if path is None:
+            return None
+        p = Path(path)
+        if p.is_absolute() and p.exists():
+            return p
+
+        candidates = [
+            self.root_dir / p,
+            self.root_dir / "ips" / "Mage-and-Rogue" / p,
+            self.root_dir / "ips" / "Mage-and-Rogue" / "config" / "dae" / p,
+            self.root_dir / "ips" / "Mage-and-Rogue" / "config" / "dae" / p.name,
+        ]
+        for c in candidates:
+            if c.exists():
+                return c.resolve()
+
+        return (self.root_dir / p).resolve()
+
+    def get_attached_config_path(self):
+        """Returns Path to the currently attached config file, or None if detached."""
+        if not self.is_attached():
+            return None
+
+        # 1. Check persistent state file
+        if self.state_file.exists():
+            try:
+                with open(self.state_file, "r", encoding="utf-8") as f:
+                    line = f.read().strip()
+                if line:
+                    resolved = self._resolve_config_path(line)
+                    if resolved.exists():
+                        return resolved
+            except Exception:
+                pass
+
+        # 2. Check ariane_soc_pkg.sv sentinels
+        if self.soc_pkg_path.exists():
+            try:
+                with open(self.soc_pkg_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                m = re.search(r"//\s*MAGE_ATTACHED_CONFIG:\s*(.+)", content)
+                if m:
+                    resolved = self._resolve_config_path(m.group(1).strip())
+                    if resolved.exists():
+                        return resolved
+            except Exception:
+                pass
+
+        # 3. Fallback: check sw/mage.h if attached
+        gen_cfg = self.get_generated_config_path()
+        if gen_cfg and gen_cfg.exists():
+            return gen_cfg
+
+        return None
+
+    def get_generated_config_path(self):
+        """Returns Path to config used to generate ips/Mage-and-Rogue/sw/mage.h, or None."""
+        mage_h = self.root_dir / "ips" / "Mage-and-Rogue" / "sw" / "mage.h"
+        if not mage_h.exists():
+            return None
+        try:
+            with open(mage_h, "r", encoding="utf-8") as f:
+                content = f.read()
+            m = re.search(r"//\s*MAGE_CFG_HJSON\s*=\s*(.+)", content)
+            if not m:
+                m = re.search(r'#define\s+MAGE_CFG_HJSON\s+"([^"]+)"', content)
+            if m:
+                resolved = self._resolve_config_path(m.group(1).strip())
+                if resolved.exists():
+                    return resolved
+        except Exception:
+            pass
+        return None
 
     def _load_hjson(self, path):
         with open(path, "r", encoding="utf-8") as f:
@@ -193,15 +282,35 @@ class MageSoCManager:
         # 4. Modify core/Flist.cva6
         self._patch_flist(params)
 
+        # 5. Record attached configuration in state file
+        try:
+            rel_cfg = str(self.config_path.relative_to(self.root_dir))
+        except ValueError:
+            rel_cfg = str(self.config_path)
+        with open(self.state_file, "w", encoding="utf-8") as f:
+            f.write(rel_cfg + "\n")
+
         print("[SUCCESS] Mage successfully attached to CVA6 SoC!")
 
     def detach(self):
         """Detaches Mage from CVA6 SoC files and restores pristine state."""
         if not self.is_attached() and not self.backup_dir.exists():
             print("[INFO] Mage is not currently attached. SoC is already clean.")
+            if self.state_file.exists():
+                try:
+                    self.state_file.unlink()
+                except OSError:
+                    pass
             return
 
         print("[INFO] Detaching Mage and restoring SoC files to pristine state...")
+
+        # Remove state file
+        if self.state_file.exists():
+            try:
+                self.state_file.unlink()
+            except OSError:
+                pass
 
         # Restore from backup directory if available
         if self.backup_dir.exists():
@@ -221,6 +330,21 @@ class MageSoCManager:
     def _patch_soc_pkg(self, params):
         with open(self.soc_pkg_path, "r", encoding="utf-8") as f:
             content = f.read()
+
+        # E. Config info sentinel at beginning of package
+        pkg_target = re.search(r"(package\s+ariane_soc\s*;)", content)
+        if pkg_target:
+            try:
+                rel_cfg = str(self.config_path.relative_to(self.root_dir))
+            except ValueError:
+                rel_cfg = str(self.config_path)
+            info_inj = (
+                f"{pkg_target.group(1)}\n"
+                f"// >>>>> MAGE_ATTACH_START: CONFIG_INFO >>>>>\n"
+                f"// MAGE_ATTACHED_CONFIG: {rel_cfg}\n"
+                f"// <<<<< MAGE_ATTACH_END: CONFIG_INFO <<<<<\n"
+            )
+            content = content[:pkg_target.start()] + info_inj + content[pkg_target.end():]
 
         # A. Enum axi_slaves_t
         enum_target = re.search(r"(\bDebug\s*=\s*9\s*)(\n\s*\}\s*axi_slaves_t;)", content)
@@ -413,13 +537,34 @@ class MageSoCManager:
         print(f"Mage Attachment Status: {'ATTACHED' if attached else 'DETACHED'}")
         if attached:
             try:
+                attached_path = self.get_attached_config_path()
+                if attached_path:
+                    self.config_path = attached_path
                 params = self.get_config_params()
-                print(f"  Config: {self.config_path.name}")
+                try:
+                    rel_cfg = str(self.config_path.relative_to(self.root_dir))
+                except ValueError:
+                    rel_cfg = str(self.config_path)
+                print(f"  Config: {self.config_path.name} ({rel_cfg})")
                 print(f"  SpM Banks: {params['n_banks']}, Bank Size: {params['num_words']} words ({params['spm_bytes'] / 1024:.1f} KB total)")
                 print(f"  MageCtrl: [0x{params['ctrl_base']:08X} - 0x{params['ctrl_base'] + params['ctrl_len']:08X}]")
                 print(f"  MageData: [0x{params['data_base']:08X} - 0x{params['data_base'] + params['data_len']:08X}]")
                 print(f"  PLIC IRQ: Line {params['plic_irq_source']}")
+
+                # Check if Mage RTL/SW matches
+                gen_path = self.get_generated_config_path()
+                if gen_path:
+                    if gen_path.name == self.config_path.name:
+                        print(f"  Mage SW/RTL Config: {gen_path.name} (MATCH)")
+                    else:
+                        print(f"  Mage SW/RTL Config: {gen_path.name} (WARNING: DESYNC! SoC has {self.config_path.name})")
+                else:
+                    print("  Mage SW/RTL Config: (Could not determine from sw/mage.h)")
             except Exception as e:
                 print(f"  (Could not read config details: {e})")
+        else:
+            gen_path = self.get_generated_config_path()
+            if gen_path:
+                print(f"  Last Generated SW/RTL: {gen_path.name}")
         print(f"  Backup directory present: {'YES' if self.backup_dir.exists() else 'NO'}")
 

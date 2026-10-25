@@ -12,6 +12,8 @@
 //   Phase 3: Raw Bank Write   -> Verify CPU linear read reconstructs linear order.
 //   Phase 4: Non-XOR Stream 2 (Zetas, 1 bank) -> Verify unaffected by XOR mode.
 
+// MAGE_CFG_HJSON = ips/Mage-and-Rogue/config/dae/cfg_ntt_1u_3stream.hjson
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
