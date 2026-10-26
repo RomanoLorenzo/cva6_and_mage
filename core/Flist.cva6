@@ -198,7 +198,3 @@ ${CVA6_REPO_DIR}/core/cva6_mmu/cva6_tlb.sv
 ${CVA6_REPO_DIR}/core/cva6_mmu/cva6_shared_tlb.sv
 
 // end of manifest
-
-// >>>>> MAGE_ATTACH_START: MAGE_FLIST >>>>>
--F ${CVA6_REPO_DIR}/ips/Mage-and-Rogue/Flist.mage
-// <<<<< MAGE_ATTACH_END: MAGE_FLIST <<<<<

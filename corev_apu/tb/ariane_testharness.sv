@@ -506,11 +506,6 @@ module ariane_testharness #(
     '{ idx: ariane_soc::Ethernet, start_addr: ariane_soc::EthernetBase, end_addr: ariane_soc::EthernetBase + ariane_soc::EthernetLength },
     '{ idx: ariane_soc::GPIO,     start_addr: ariane_soc::GPIOBase,     end_addr: ariane_soc::GPIOBase + ariane_soc::GPIOLength         },
     '{ idx: ariane_soc::DRAM,     start_addr: ariane_soc::DRAMBase,     end_addr: ariane_soc::DRAMBase + ariane_soc::DRAMLength         }
-// >>>>> MAGE_ATTACH_START: ADDR_MAP >>>>>
-    ,
-    '{ idx: ariane_soc::MageCtrl, start_addr: ariane_soc::MageCtrlBase, end_addr: ariane_soc::MageCtrlBase + ariane_soc::MageCtrlLength },
-    '{ idx: ariane_soc::MageData, start_addr: ariane_soc::MageDataBase, end_addr: ariane_soc::MageDataBase + ariane_soc::MageDataLength }
-// <<<<< MAGE_ATTACH_END: ADDR_MAP <<<<<
   };
 
   localparam axi_pkg::xbar_cfg_t AXI_XBAR_CFG = '{
@@ -601,9 +596,6 @@ module ariane_testharness #(
     .ethernet  ( master[ariane_soc::Ethernet] ),
     .timer     ( master[ariane_soc::Timer]    ),
     .irq_o     ( irqs                         ),
-// >>>>> MAGE_ATTACH_START: PERIPH_IRQ_CONN >>>>>
-    .mage_irq_i( mage_intr                    ),
-// <<<<< MAGE_ATTACH_END: PERIPH_IRQ_CONN <<<<<
     .rx_i      ( rx                           ),
     .tx_o      ( tx                           ),
     .eth_txck  ( ),
@@ -624,39 +616,6 @@ module ariane_testharness #(
   );
 
   uart_bus #(.BAUD_RATE(115200), .PARITY_EN(0)) i_uart_bus (.rx(tx), .tx(rx), .rx_en(1'b1));
-
-// >>>>> MAGE_ATTACH_START: MAGE_WRAPPER_INST >>>>>
-  // ---------------
-  // Mage CGRA (DAE Mode)
-  // ---------------
-  ariane_axi_soc::req_slv_t  mage_ctrl_req,  mage_data_req;
-  ariane_axi_soc::resp_slv_t mage_ctrl_resp, mage_data_resp;
-  logic                      mage_intr;
-
-  `AXI_ASSIGN_TO_REQ(mage_ctrl_req, master[ariane_soc::MageCtrl])
-  `AXI_ASSIGN_FROM_RESP(master[ariane_soc::MageCtrl], mage_ctrl_resp)
-
-  `AXI_ASSIGN_TO_REQ(mage_data_req, master[ariane_soc::MageData])
-  `AXI_ASSIGN_FROM_RESP(master[ariane_soc::MageData], mage_data_resp)
-
-  mage_axi_wrapper #(
-    .AxiAddrWidth ( AXI_ADDRESS_WIDTH            ),
-    .AxiDataWidth ( AXI_DATA_WIDTH               ),
-    .AxiIdWidth   ( ariane_axi_soc::IdWidthSlave ),
-    .AxiUserWidth ( AXI_USER_WIDTH               ),
-    .MaxTrans     ( 4                            ),
-    .axi_req_t    ( ariane_axi_soc::req_slv_t    ),
-    .axi_rsp_t    ( ariane_axi_soc::resp_slv_t   )
-  ) i_mage_axi_wrapper (
-    .clk_i           ( clk_i          ),
-    .rst_ni          ( ndmreset_n     ),
-    .axi_req_i       ( mage_data_req  ),
-    .axi_rsp_o       ( mage_data_resp ),
-    .mage_intr_o     ( mage_intr      ),
-    .axi_ctrl_req_i  ( mage_ctrl_req  ),
-    .axi_ctrl_rsp_o  ( mage_ctrl_resp )
-  );
-// <<<<< MAGE_ATTACH_END: MAGE_WRAPPER_INST <<<<<
 
   // ---------------
   // Core
