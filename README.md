@@ -198,3 +198,7 @@ This command displays whether Mage is attached, the active configuration, SpM ba
 ```Bash
 python3 mage-detach
 ```
+
+### Preliminary results
+
+Mage's performance running NTT algorithm: ![docs/Mage/results.png](docs/Mage/results.png "Mage's performance running NTT algorithm")

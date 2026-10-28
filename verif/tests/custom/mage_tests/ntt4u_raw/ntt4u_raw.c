@@ -6,8 +6,7 @@
 // Description: Full 8-stage Radix-2 NTT verification test on Mage CGRA
 //              using 4 parallel Computing Unit(s) (8x4 PEA, U = 4, 20 SpM banks)
 //              with conflict-free XOR addressing and Montgomery modular reduction.
-//              All 8 stages are unrolled directly in main() using compile-time constant register macros,
-//              eliminating runtime configuration calculation and function call overhead on the CVA6 core.
+//              Instrumented with cycle and retired instruction counting for all 19 phases.
 //              Execution completes in 256 cycles (32 cycles/stage x 8 stages).
 //              Outputs are validated against the official CRYSTALS-Dilithium CPU golden model.
 
@@ -20,6 +19,52 @@
 #include "mage.h"
 #include "mage_cva6.h"
 #include "mage_regs.h"
+
+#include "encoding.h"
+
+#define NUM_PERF_PHASES 19
+
+typedef enum {
+  PHASE_INIT_SPM_WRITE      = 0,
+  PHASE_CFG_STAGE_INDEP     = 1,
+  PHASE_CFG_STAGE_0         = 2,
+  PHASE_EXEC_STAGE_0        = 3,
+  PHASE_CFG_STAGE_1         = 4,
+  PHASE_EXEC_STAGE_1        = 5,
+  PHASE_CFG_STAGE_2         = 6,
+  PHASE_EXEC_STAGE_2        = 7,
+  PHASE_CFG_STAGE_3         = 8,
+  PHASE_EXEC_STAGE_3        = 9,
+  PHASE_CFG_STAGE_4         = 10,
+  PHASE_EXEC_STAGE_4        = 11,
+  PHASE_CFG_STAGE_5         = 12,
+  PHASE_EXEC_STAGE_5        = 13,
+  PHASE_CFG_STAGE_6         = 14,
+  PHASE_EXEC_STAGE_6        = 15,
+  PHASE_CFG_STAGE_7         = 16,
+  PHASE_EXEC_STAGE_7        = 17,
+  PHASE_FINAL_SPM_READ      = 18
+} perf_phase_t;
+
+typedef struct {
+  uint32_t cycles;
+  uint32_t instr;
+} phase_metric_t;
+
+static phase_metric_t perf_data[NUM_PERF_PHASES];
+static uint32_t start_instret;
+
+#define PERF_START() do { \
+  write_csr(mcycle, 0); \
+  start_instret = (uint32_t)read_csr(minstret); \
+} while (0)
+
+#define PERF_STOP(p) do { \
+  perf_data[p].cycles = (uint32_t)read_csr(mcycle); \
+  perf_data[p].instr  = (uint32_t)read_csr(minstret) - start_instret; \
+} while (0)
+
+#define PERF_MAGIC 0x50455246U // 'PERF'
 
 #define DRAM_BASE             ((volatile uint32_t *)(0x80000000UL))
 #define N                     256U
@@ -37,6 +82,7 @@
   asm volatile("fence rw, rw" ::: "memory"); \
 } while (0)
 
+/* Twiddle factors from official CRYSTALS-Dilithium repository */
 static const int32_t zetas[N] = {
          0,    25847, -2608894,  -518909,   237124,  -777960,  -876248,   466468,
    1826347,  2353451,  -359251, -2091905,  3119733, -2884855,  3111497,  2680103,
@@ -75,10 +121,8 @@ static const int32_t zetas[N] = {
 /* Function prototypes */
 int32_t montgomery_reduce(int64_t a);
 void ntt(int32_t a[N]);
-uint32_t loadSamplesIntoSpM(const int32_t *invect, uint32_t len);
 void loadZetasIntoSpM(void);
 void clearPongBanks(void);
-uint32_t readSamplesFromSpM(int32_t *outvect, uint32_t len);
 uint32_t compareOutputs(const int32_t *hw, const int32_t *gold, uint32_t len);
 void configureStageIndependentRegs(void);
 
@@ -86,13 +130,9 @@ static int32_t vec_in[N];
 static int32_t gold_out[N];
 static int32_t hw_out[N];
 
-/**
- * @brief Main entry point for 4-CU Radix-2 NTT verification test on Mage.
- *        All 8 stages are executed sequentially with compile-time macro writes directly in main().
- *
- * @return int 0 if all 256 output coefficients match Dilithium golden model, non-zero otherwise.
- */
 int main(void) {
+  clear_csr(mcountinhibit, 1); // Unfreeze performance counters
+
   // 1. Generate deterministic non-trivial polynomial input coefficients
   for (uint32_t i = 0; i < N; i++) {
     vec_in[i] = (int32_t)(i * 17U) - 123;
@@ -107,24 +147,29 @@ int main(void) {
   loadZetasIntoSpM();
   clearPongBanks();
 
-  // 4. Configure static, stage-independent Mage control registers
-  configureStageIndependentRegs();
+  // 4. Set CPU XOR mode for Ping SpM sample access
+  REG_STREAM_XOR_MODE = (1U << 1) | (1U << 0);
+  REG_BLOCK_SIZE = (1U << MAGE_BLOCK_SIZE_CPU_XOR_MODE_BIT) | 3U;
 
-  // 5. Load input samples into SpM Ping banks linearly (hardware maps XOR-like across 8 banks)
-  uint32_t load_errs = loadSamplesIntoSpM(vec_in, N);
-  if (load_errs != 0) {
-    DRAM_BASE[0] = 0xDEAD0001U;
-    DRAM_BASE[1] = load_errs;
-    return (int)load_errs;
+  // Phase 1: Initial SpM sample write by the CPU
+  volatile uint32_t *spm_ping = (volatile uint32_t *)MAGE_DATA_BASE;
+  PERF_START();
+  for (uint32_t a = 0; a < N; a++) {
+    spm_ping[a] = (uint32_t)vec_in[a];
   }
+  asm volatile("fence w, w" ::: "memory");
+  PERF_STOP(PHASE_INIT_SPM_WRITE);
 
-  // 6. Execute all 8 NTT stages sequentially with direct compile-time constant macro writes
+  // Phase 2: Stage-independent configuration register write
+  PERF_START();
+  configureStageIndependentRegs();
+  asm volatile("fence w, w" ::: "memory");
+  PERF_STOP(PHASE_CFG_STAGE_INDEP);
 
   /* ================= STAGE 0 (Ping -> Pong) ================= */
-  // Hardware loop bounds:
+  // Phase 3: Stage 0 stage-dependent configuration register write
+  PERF_START();
   REG_FLB_HWL = 0x0000001FU;
-
-  // AGE Strides:
   REG_STRIDES(0) = 0x00000004U;
   REG_STRIDES(1) = 0x00000004U;
   REG_STRIDES(2) = 0x00000004U;
@@ -146,7 +191,6 @@ int main(void) {
   REG_STRIDES(18) = 0x00000100U;
   REG_STRIDES(19) = 0x00000100U;
 
-  // AGE Configurations:
   REG_CFG_MAGE_AGE( 0) = 0x800021C0U;
   REG_CFG_MAGE_AGE( 1) = 0x804021C0U;
   REG_CFG_MAGE_AGE( 2) = 0x8000A1C0U;
@@ -168,7 +212,6 @@ int main(void) {
   REG_CFG_MAGE_AGE(18) = 0x8000A440U;
   REG_CFG_MAGE_AGE(19) = 0x8000A640U;
 
-  // PEA Dataflow Configuration:
   REG_CFG_PE(0, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_0, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
@@ -181,14 +224,19 @@ int main(void) {
   REG_CFG_PE(6, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_0, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
+  asm volatile("fence w, w" ::: "memory");
+  PERF_STOP(PHASE_CFG_STAGE_0);
+
+  // Phase 4: Stage 0 execution
+  PERF_START();
   MAGE_START();
   MAGE_WAIT_DONE();
+  PERF_STOP(PHASE_EXEC_STAGE_0);
 
   /* ================= STAGE 1 (Pong -> Ping) ================= */
-  // Hardware loop bounds:
+  // Phase 5: Stage 1 stage-dependent configuration register write
+  PERF_START();
   REG_FLB_HWL = 0x0000010FU;
-
-  // AGE Strides:
   REG_STRIDES(0) = 0x00008004U;
   REG_STRIDES(1) = 0x00008004U;
   REG_STRIDES(2) = 0x00008004U;
@@ -210,7 +258,6 @@ int main(void) {
   REG_STRIDES(18) = 0x00000100U;
   REG_STRIDES(19) = 0x00000100U;
 
-  // AGE Configurations:
   REG_CFG_MAGE_AGE( 0) = 0x800001C7U;
   REG_CFG_MAGE_AGE( 1) = 0x802001C7U;
   REG_CFG_MAGE_AGE( 2) = 0x800081C7U;
@@ -232,7 +279,6 @@ int main(void) {
   REG_CFG_MAGE_AGE(18) = 0x80012440U;
   REG_CFG_MAGE_AGE(19) = 0x80012640U;
 
-  // PEA Dataflow Configuration:
   REG_CFG_PE(0, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_1, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_1, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
@@ -245,14 +291,19 @@ int main(void) {
   REG_CFG_PE(6, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_1, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_1, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
+  asm volatile("fence w, w" ::: "memory");
+  PERF_STOP(PHASE_CFG_STAGE_1);
+
+  // Phase 6: Stage 1 execution
+  PERF_START();
   MAGE_START();
   MAGE_WAIT_DONE();
+  PERF_STOP(PHASE_EXEC_STAGE_1);
 
   /* ================= STAGE 2 (Ping -> Pong) ================= */
-  // Hardware loop bounds:
+  // Phase 7: Stage 2 stage-dependent configuration register write
+  PERF_START();
   REG_FLB_HWL = 0x00000307U;
-
-  // AGE Strides:
   REG_STRIDES(0) = 0x00004004U;
   REG_STRIDES(1) = 0x00004004U;
   REG_STRIDES(2) = 0x00004004U;
@@ -274,7 +325,6 @@ int main(void) {
   REG_STRIDES(18) = 0x00000100U;
   REG_STRIDES(19) = 0x00000100U;
 
-  // AGE Configurations:
   REG_CFG_MAGE_AGE( 0) = 0x800021C0U;
   REG_CFG_MAGE_AGE( 1) = 0x801021C0U;
   REG_CFG_MAGE_AGE( 2) = 0x8000A1C0U;
@@ -296,7 +346,6 @@ int main(void) {
   REG_CFG_MAGE_AGE(18) = 0x80022440U;
   REG_CFG_MAGE_AGE(19) = 0x80022640U;
 
-  // PEA Dataflow Configuration:
   REG_CFG_PE(0, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_0, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
@@ -309,14 +358,19 @@ int main(void) {
   REG_CFG_PE(6, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_0, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
+  asm volatile("fence w, w" ::: "memory");
+  PERF_STOP(PHASE_CFG_STAGE_2);
+
+  // Phase 8: Stage 2 execution
+  PERF_START();
   MAGE_START();
   MAGE_WAIT_DONE();
+  PERF_STOP(PHASE_EXEC_STAGE_2);
 
   /* ================= STAGE 3 (Pong -> Ping) ================= */
-  // Hardware loop bounds:
+  // Phase 9: Stage 3 stage-dependent configuration register write
+  PERF_START();
   REG_FLB_HWL = 0x00000703U;
-
-  // AGE Strides:
   REG_STRIDES(0) = 0x00002004U;
   REG_STRIDES(1) = 0x00002004U;
   REG_STRIDES(2) = 0x00002004U;
@@ -338,7 +392,6 @@ int main(void) {
   REG_STRIDES(18) = 0x00000100U;
   REG_STRIDES(19) = 0x00000100U;
 
-  // AGE Configurations:
   REG_CFG_MAGE_AGE( 0) = 0x800001C7U;
   REG_CFG_MAGE_AGE( 1) = 0x800801C7U;
   REG_CFG_MAGE_AGE( 2) = 0x800081C7U;
@@ -360,7 +413,6 @@ int main(void) {
   REG_CFG_MAGE_AGE(18) = 0x80042440U;
   REG_CFG_MAGE_AGE(19) = 0x80042640U;
 
-  // PEA Dataflow Configuration:
   REG_CFG_PE(0, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_1, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_1, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
@@ -373,14 +425,19 @@ int main(void) {
   REG_CFG_PE(6, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_1, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_1, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
+  asm volatile("fence w, w" ::: "memory");
+  PERF_STOP(PHASE_CFG_STAGE_3);
+
+  // Phase 10: Stage 3 execution
+  PERF_START();
   MAGE_START();
   MAGE_WAIT_DONE();
+  PERF_STOP(PHASE_EXEC_STAGE_3);
 
   /* ================= STAGE 4 (Ping -> Pong) ================= */
-  // Hardware loop bounds:
+  // Phase 11: Stage 4 stage-dependent configuration register write
+  PERF_START();
   REG_FLB_HWL = 0x00000F01U;
-
-  // AGE Strides:
   REG_STRIDES(0) = 0x00001004U;
   REG_STRIDES(1) = 0x00001004U;
   REG_STRIDES(2) = 0x00001004U;
@@ -402,7 +459,6 @@ int main(void) {
   REG_STRIDES(18) = 0x00000100U;
   REG_STRIDES(19) = 0x00000100U;
 
-  // AGE Configurations:
   REG_CFG_MAGE_AGE( 0) = 0x800021C0U;
   REG_CFG_MAGE_AGE( 1) = 0x800421C0U;
   REG_CFG_MAGE_AGE( 2) = 0x8000A1C0U;
@@ -424,7 +480,6 @@ int main(void) {
   REG_CFG_MAGE_AGE(18) = 0x80082440U;
   REG_CFG_MAGE_AGE(19) = 0x80082640U;
 
-  // PEA Dataflow Configuration:
   REG_CFG_PE(0, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_0, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
@@ -437,14 +492,19 @@ int main(void) {
   REG_CFG_PE(6, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_0, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
+  asm volatile("fence w, w" ::: "memory");
+  PERF_STOP(PHASE_CFG_STAGE_4);
+
+  // Phase 12: Stage 4 execution
+  PERF_START();
   MAGE_START();
   MAGE_WAIT_DONE();
+  PERF_STOP(PHASE_EXEC_STAGE_4);
 
   /* ================= STAGE 5 (Pong -> Ping) ================= */
-  // Hardware loop bounds:
+  // Phase 13: Stage 5 stage-dependent configuration register write
+  PERF_START();
   REG_FLB_HWL = 0x00001F00U;
-
-  // AGE Strides:
   REG_STRIDES(0) = 0x00000804U;
   REG_STRIDES(1) = 0x00000804U;
   REG_STRIDES(2) = 0x00000804U;
@@ -466,7 +526,6 @@ int main(void) {
   REG_STRIDES(18) = 0x00000100U;
   REG_STRIDES(19) = 0x00000100U;
 
-  // AGE Configurations:
   REG_CFG_MAGE_AGE( 0) = 0x800001C7U;
   REG_CFG_MAGE_AGE( 1) = 0x800201C7U;
   REG_CFG_MAGE_AGE( 2) = 0x800081C7U;
@@ -488,7 +547,6 @@ int main(void) {
   REG_CFG_MAGE_AGE(18) = 0x80102440U;
   REG_CFG_MAGE_AGE(19) = 0x80102640U;
 
-  // PEA Dataflow Configuration:
   REG_CFG_PE(0, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_1, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_1, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
@@ -501,14 +559,19 @@ int main(void) {
   REG_CFG_PE(6, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_1, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_1, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
+  asm volatile("fence w, w" ::: "memory");
+  PERF_STOP(PHASE_CFG_STAGE_5);
+
+  // Phase 14: Stage 5 execution
+  PERF_START();
   MAGE_START();
   MAGE_WAIT_DONE();
+  PERF_STOP(PHASE_EXEC_STAGE_5);
 
   /* ================= STAGE 6 (Ping -> Pong) ================= */
-  // Hardware loop bounds:
+  // Phase 15: Stage 6 stage-dependent configuration register write
+  PERF_START();
   REG_FLB_HWL = 0x0000001FU;
-
-  // AGE Strides:
   REG_STRIDES(0) = 0x00000008U;
   REG_STRIDES(1) = 0x00000008U;
   REG_STRIDES(2) = 0x00000008U;
@@ -530,7 +593,6 @@ int main(void) {
   REG_STRIDES(18) = 0x00000002U;
   REG_STRIDES(19) = 0x00000002U;
 
-  // AGE Configurations:
   REG_CFG_MAGE_AGE( 0) = 0x800021C0U;
   REG_CFG_MAGE_AGE( 1) = 0x800121C0U;
   REG_CFG_MAGE_AGE( 2) = 0x8000A1C0U;
@@ -552,7 +614,6 @@ int main(void) {
   REG_CFG_MAGE_AGE(18) = 0x8020A440U;
   REG_CFG_MAGE_AGE(19) = 0x8020A640U;
 
-  // PEA Dataflow Configuration:
   REG_CFG_PE(0, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_0, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
@@ -565,14 +626,19 @@ int main(void) {
   REG_CFG_PE(6, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_0, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_0, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
+  asm volatile("fence w, w" ::: "memory");
+  PERF_STOP(PHASE_CFG_STAGE_6);
+
+  // Phase 16: Stage 6 execution
+  PERF_START();
   MAGE_START();
   MAGE_WAIT_DONE();
+  PERF_STOP(PHASE_EXEC_STAGE_6);
 
   /* ================= STAGE 7 (Pong -> Ping) ================= */
-  // Hardware loop bounds:
+  // Phase 17: Stage 7 stage-dependent configuration register write
+  PERF_START();
   REG_FLB_HWL = 0x0000001FU;
-
-  // AGE Strides:
   REG_STRIDES(0) = 0x00000008U;
   REG_STRIDES(1) = 0x00000008U;
   REG_STRIDES(2) = 0x00000008U;
@@ -594,7 +660,6 @@ int main(void) {
   REG_STRIDES(18) = 0x00000004U;
   REG_STRIDES(19) = 0x00000004U;
 
-  // AGE Configurations:
   REG_CFG_MAGE_AGE( 0) = 0x800001C7U;
   REG_CFG_MAGE_AGE( 1) = 0x800081C7U;
   REG_CFG_MAGE_AGE( 2) = 0x800101C7U;
@@ -616,7 +681,6 @@ int main(void) {
   REG_CFG_MAGE_AGE(18) = 0x80412440U;
   REG_CFG_MAGE_AGE(19) = 0x8041A640U;
 
-  // PEA Dataflow Configuration:
   REG_CFG_PE(0, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_1, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_1, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(1, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
@@ -629,16 +693,27 @@ int main(void) {
   REG_CFG_PE(6, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_NOP,  MAGE_PE_MUX_MEM_IN_1, 0, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_MEM_IN_1, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 0) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_UP,   0, MAGE_DELAY_DEPTH_1);
   REG_CFG_PE(7, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_MEM_IN_1, MAGE_PE_MUX_MEM_IN_2, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
+  asm volatile("fence w, w" ::: "memory");
+  PERF_STOP(PHASE_CFG_STAGE_7);
+
+  // Phase 18: Stage 7 execution
+  PERF_START();
   MAGE_START();
   MAGE_WAIT_DONE();
+  PERF_STOP(PHASE_EXEC_STAGE_7);
 
-  // 7. Read back final processed samples from SpM Ping banks linearly
-  readSamplesFromSpM(hw_out, N);
+  // Phase 19: Final SpM sample readback by the CPU
+  PERF_START();
+  for (uint32_t a = 0; a < N; a++) {
+    hw_out[a] = (int32_t)spm_ping[a];
+  }
+  asm volatile("fence r, r" ::: "memory");
+  PERF_STOP(PHASE_FINAL_SPM_READ);
 
   // 8. Validate final output against end-to-end Dilithium golden model
   uint32_t total_errors = compareOutputs(hw_out, gold_out, N);
 
-  // 9. Report status into DRAM
+  // 9. Report status and performance metrics into DRAM
   DRAM_BASE[0] = (total_errors == 0) ? (0xCAFE0000U | N_UNITS) : 0xDEADBEEFU;
   DRAM_BASE[1] = total_errors;
   DRAM_BASE[2] = (uint32_t)hw_out[0];
@@ -646,8 +721,15 @@ int main(void) {
   DRAM_BASE[4] = (uint32_t)hw_out[1];
   DRAM_BASE[5] = (uint32_t)gold_out[1];
 
+  DRAM_BASE[10] = PERF_MAGIC;
+  for (int i = 0; i < NUM_PERF_PHASES; i++) {
+    DRAM_BASE[12 + 2 * i]     = perf_data[i].cycles;
+    DRAM_BASE[12 + 2 * i + 1] = perf_data[i].instr;
+  }
+
   return (int)total_errors;
 }
+
 
 /**
  * @brief Montgomery reduction official Dilithium algorithm.
@@ -685,42 +767,6 @@ void ntt(int32_t a[N]) {
   }
 }
 
-/**
- * @brief Load input samples into SpM Ping banks linearly.
- *        With Mage CPU XOR mode enabled, the hardware SpM decoder transparently
- *        distributes sequential samples a = 0..255 across Ping banks
- *        in the conflict-free Radix-2 NTT XOR layout.
- *
- * @param invect Pointer to ordered input array.
- * @param len Number of elements (256).
- * @return uint32_t Number of verification readback mismatches.
- */
-uint32_t loadSamplesIntoSpM(const int32_t *invect, uint32_t len) {
-  uint32_t errs = 0;
-  volatile uint32_t *spm_ping = (volatile uint32_t *)MAGE_DATA_BASE;
-
-  for (uint32_t a = 0; a < len; a++) {
-    spm_ping[a] = (uint32_t)invect[a];
-  }
-
-  asm volatile("fence w, w" ::: "memory");
-
-  for (uint32_t a = 0; a < len; a++) {
-    if (spm_ping[a] != (uint32_t)invect[a]) {
-      errs++;
-    }
-  }
-
-  asm volatile("fence r, r" ::: "memory");
-  return errs;
-}
-
-/**
- * @brief Preload twiddle factors into Stream 2 (Banks 16, 17, 18, 19).
- *        All 4 banks receive all 256 twiddle factors so that CUs 0..3
- *        can access independent twiddles conflict-free in parallel.
- *        Written while linear bank mode is active.
- */
 void loadZetasIntoSpM(void) {
   for (uint32_t b = 16; b < 20; b++) {
     volatile uint32_t *bank = MAGE_BANK(b);
@@ -731,10 +777,6 @@ void loadZetasIntoSpM(void) {
   asm volatile("fence w, w" ::: "memory");
 }
 
-/**
- * @brief Clear Pong destination banks with a known poison value to prevent false positives.
- *        Cleared across Banks 8..15 while linear bank mode is active.
- */
 void clearPongBanks(void) {
   for (uint32_t b = 8; b < 16; b++) {
     volatile uint32_t *bank = MAGE_BANK(b);
@@ -745,35 +787,6 @@ void clearPongBanks(void) {
   asm volatile("fence w, w" ::: "memory");
 }
 
-/**
- * @brief Read back processed samples from SpM Ping banks linearly.
- *        With Mage CPU XOR mode enabled, the hardware SpM decoder transparently
- *        gathers samples from the conflict-free XOR bank layout across Ping banks
- *        and returns them in natural sequential order a = 0..255.
- *
- * @param outvect Destination buffer.
- * @param len Number of elements (256).
- * @return uint32_t Number of elements read.
- */
-uint32_t readSamplesFromSpM(int32_t *outvect, uint32_t len) {
-  volatile uint32_t *spm_ping = (volatile uint32_t *)MAGE_DATA_BASE;
-
-  for (uint32_t a = 0; a < len; a++) {
-    outvect[a] = (int32_t)spm_ping[a];
-  }
-
-  asm volatile("fence r, r" ::: "memory");
-  return len;
-}
-
-/**
- * @brief Compare hardware output array against golden model array.
- *
- * @param hw Hardware outputs.
- * @param gold Expected golden outputs.
- * @param len Number of elements (256).
- * @return uint32_t Number of mismatches.
- */
 uint32_t compareOutputs(const int32_t *hw, const int32_t *gold, uint32_t len) {
   uint32_t errs = 0;
   for (uint32_t i = 0; i < len; i++) {
@@ -784,53 +797,19 @@ uint32_t compareOutputs(const int32_t *hw, const int32_t *gold, uint32_t len) {
   return errs;
 }
 
-/**
- * @brief Configure static, stage-independent Mage control registers for 4 CU(s).
- */
 void configureStageIndependentRegs(void) {
-  /**
-   * REG_GEN_CFG: DAE Mode, Iteration Interval (II) = 1
-   *   REG_GEN_CFG[18]  = 1 (DAE mode enable)
-   *   REG_GEN_CFG[3:0] = 1 (II = 1 cycle per butterfly iteration)
-   */
   REG_GEN_CFG = (1U << 18) | 1U;
-
-  /**
-   * REG_BLOCK_SIZE: Enable CPU XOR mode for 8 banks (degree = 3)
-   */
   REG_BLOCK_SIZE = (1U << MAGE_BLOCK_SIZE_CPU_XOR_MODE_BIT) | 3U;
-
-  /**
-   * REG_STREAM_XOR_MODE = 0x00000003
-   *   STREAM_XOR_MODE[0] = 1; XOR addressing on Stream 0 (Ping)
-   *   STREAM_XOR_MODE[1] = 1; XOR addressing on Stream 1 (Pong)
-   *   STREAM_XOR_MODE[2] = 0; Linear addressing on Stream 2 (Zetas)
-   */
   REG_STREAM_XOR_MODE = (1U << 1) | (1U << 0);
-
-  /**
-   * Hardware loop counters initialization:
-   */
   REG_ILB_HWL = 0x00000000U;
   REG_INC_HWL = 0x01010101U;
 
-  // Set linear stride mode for all 20 AGEs
   for (int i = 0; i < 20; i++) {
     REG_STRIDE_MODE(i) = 0x00000000U;
   }
-
-  // Clear accumulator loop selector registers
   REG_ACC_HWLP_SEL_0 = 0x00000000U;
   REG_ACC_HWLP_SEL_1 = 0x00000000U;
   REG_ACC_HWLP_SEL_2 = 0x00000000U;
-
-  /**
-   * Load crossbar and DMEM routing:
-   *   20 AGEs, 3 bits each (total 60 bits packed into 2 registers):
-   *   Stream 0 (Ping, AGE 0..7):   rel_age 0..7
-   *   Stream 1 (Pong, AGE 8..15):  rel_age 0..7
-   *   Stream 2 (Zeta, AGE 16..19): rel_age 0..3
-   */
   uint32_t sel_val[2] = {0U, 0U};
   for (uint32_t s = 0; s < 20; s++) {
     uint32_t rel_age = (s < 8U) ? s : (s < 16U) ? (s - 8U) : (s - 16U);
@@ -848,36 +827,21 @@ void configureStageIndependentRegs(void) {
   REG_LOAD_AGE_SEL(1) = sel_val[1];
   REG_PEA_DMEM_SEL(0) = sel_val[0];
   REG_PEA_DMEM_SEL(1) = sel_val[1];
-
-  // Output multiplexer selection: Col 3 for Rows 0..7
   REG_OUT_PEA_SEL = 0xFFFFFFFFU;
-
-  // Set constants for CUs 0..3
   for (uint32_t cu = 0; cu < N_UNITS; cu++) {
     mage_set_pe_constant(QINV_VAL, 2U * cu, 1);
     mage_set_pe_constant(Q_VAL,    2U * cu, 2);
   }
 
-  // Pre-configure static PE dataflow registers for all 4 CU(s):
   for (uint32_t cu = 0; cu < N_UNITS; cu++) {
     uint32_t r0 = 2U * cu;
     uint32_t r1 = 2U * cu + 1U;
-
-    // PE(r0, 1): MUL1 = MUL0 * QINV mod 2^32, ingest MULH0 from DOWN into delay
     REG_CFG_PE(r0, 1) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MUL,  MAGE_PE_MUX_SW,       MAGE_PE_MUX_CONST, 0, MAGE_D_PE_INPUT, 0, MAGE_PE_MUX_DOWN, MAGE_DELAY_DEPTH_1);
-
-    // PE(r0, 2): MULH1 = MUL1 *H Q, forward MULH0 from D_LEFT Southward
     REG_CFG_PE(r0, 2) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_MULH, MAGE_PE_MUX_LEFT,     MAGE_PE_MUX_CONST, 0, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
-
-    // PE(r1, 2): SUB0 = MULH0 - MULH1, forward a(j) Eastward
     REG_CFG_PE(r1, 2) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_SUB,  MAGE_PE_MUX_DELAY_OP, MAGE_PE_MUX_UP,   MAGE_D_UP, MAGE_D_DELAY_OP, MAGE_D_LEFT, 0, MAGE_DELAY_DEPTH_1);
-
-    // PE(r0, 3): ADD0: b(j) = a(j) + W
     REG_CFG_PE(r0, 3) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_ADD,  MAGE_PE_MUX_DELAY_OP, MAGE_PE_MUX_SW,   MAGE_D_SW, MAGE_D_PE_OP_NONE, 0, 0, MAGE_DELAY_DEPTH_1);
-
-    // PE(r1, 3): SUB1: b(j+k) = a(j) - W
     REG_CFG_PE(r1, 3) = MAGE_BUILD_PE_CFG_EXT(MAGE_PE_OP_SUB,  MAGE_PE_MUX_DELAY_OP, MAGE_PE_MUX_LEFT, MAGE_D_LEFT, MAGE_D_PE_OP_NONE, 0, 0, MAGE_DELAY_DEPTH_1);
   }
-
   asm volatile("fence w, w" ::: "memory");
 }
+
